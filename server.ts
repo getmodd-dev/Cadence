@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { dbEngine } from './server/db.ts';
+import { generateEncryptionCredentials } from './server/crypto.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -313,7 +314,18 @@ app.post('/api/security/verify-pin', (req: Request, res: Response) => {
   }
 });
 
+// Endpoint to generate recommended high-entropy encryption keys & passphrases for Docker .env
+app.get('/api/security/generate-key', (_req: Request, res: Response) => {
+  try {
+    const creds = generateEncryptionCredentials();
+    res.json({ success: true, data: creds });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // --- Exports & Backups ---
+
 app.get('/api/export/json', (_req: Request, res: Response) => {
   try {
     const fullState = dbEngine.getFullState();

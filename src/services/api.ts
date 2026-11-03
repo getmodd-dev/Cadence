@@ -212,4 +212,16 @@ export const api = {
   getCsvExportUrl(): string {
     return '/api/export/csv';
   },
+
+  async generateEncryptionKey(): Promise<{
+    hexKey: string;
+    suggestedPassphrase: string;
+    sampleEnv: string;
+  }> {
+    const res = await fetch('/api/security/generate-key');
+    if (!res.ok) throw new Error('Failed to generate encryption key');
+    const data = await res.json();
+    return data.data;
+  },
 };
+

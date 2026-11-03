@@ -108,6 +108,14 @@ export interface DailyCheckin {
   associatedIncidentId?: string;
 }
 
+export interface EncryptionInfo {
+  enabled: boolean;
+  algo: string;
+  kdf: string;
+  isEncryptedOnDisk: boolean;
+  status: string;
+}
+
 export interface DatabaseState {
   version: number;
   coworkers: CoworkerProfile[];
@@ -116,3 +124,4 @@ export interface DatabaseState {
   settings: SystemSettings;
   lastBackupDate?: string;
 }
+

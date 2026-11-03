@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { DatabaseState, Interaction, CoworkerProfile, SystemSettings, DailyCheckin } from './types.js';
+import { DatabaseState, Interaction, CoworkerProfile, SystemSettings, DailyCheckin, EncryptionInfo } from './types.js';
+import { encryptPayload, decryptPayload, isEncryptedContent } from './crypto.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+const ENCRYPTION_PASSPHRASE = (process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_PASSPHRASE || '').trim();
 
 const DEFAULT_SETTINGS: SystemSettings = {
   pinHash: null,
@@ -197,7 +199,20 @@ class DatabaseEngine {
     try {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        const parsed: DatabaseState = JSON.parse(raw);
+        let parsed: DatabaseState;
+
+        if (isEncryptedContent(raw)) {
+          const decrypted = decryptPayload(raw, ENCRYPTION_PASSPHRASE);
+          parsed = JSON.parse(decrypted);
+        } else {
+          parsed = JSON.parse(raw);
+          // If a passphrase is newly supplied for a plaintext DB, encrypt on next write or auto-encrypt now
+          if (ENCRYPTION_PASSPHRASE) {
+            console.log('[Cadence Security] Transparently upgrading plaintext database to AES-256-GCM encryption.');
+            this.writeToDisk(parsed);
+          }
+        }
+
         if (!parsed.dailyLogs) {
           parsed.dailyLogs = SAMPLE_DAILY_LOGS;
           this.writeToDisk(parsed);
@@ -205,8 +220,15 @@ class DatabaseEngine {
         this.inMemoryCache = parsed;
         return parsed;
       }
-    } catch (err) {
-      console.error('Error reading database file, attempting recovery from backup:', err);
+    } catch (err: any) {
+      console.error('Error reading database file:', err.message || err);
+      // Re-throw if it's a security/decryption failure to avoid overwriting or silently ignoring encrypted data
+      if (
+        (err.message && err.message.includes('ENCRYPTION_PASSPHRASE')) ||
+        (err.message && err.message.includes('Decryption failed'))
+      ) {
+        throw err;
+      }
     }
 
     const fallback: DatabaseState = {
@@ -223,10 +245,12 @@ class DatabaseEngine {
   private writeToDisk(state: DatabaseState): void {
     const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
     const payload = JSON.stringify(state, null, 2);
-    fs.writeFileSync(tempFile, payload, 'utf-8');
+    const content = ENCRYPTION_PASSPHRASE ? encryptPayload(payload, ENCRYPTION_PASSPHRASE) : payload;
+    fs.writeFileSync(tempFile, content, 'utf-8');
     fs.renameSync(tempFile, DB_FILE);
     this.inMemoryCache = state;
   }
+
 
   // --- Coworkers API ---
   public getCoworkers(): CoworkerProfile[] {
@@ -431,12 +455,13 @@ class DatabaseEngine {
   }
 
   // --- Backup & Restore ---
-  public createBackup(): { filename: string; timestamp: string; sizeBytes: number } {
+  public createBackup(): { filename: string; timestamp: string; sizeBytes: number; isEncrypted: boolean } {
     const db = this.readFromDisk();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `backup_interactions_${timestamp}.json`;
     const backupPath = path.join(BACKUPS_DIR, filename);
-    const content = JSON.stringify(db, null, 2);
+    const rawJson = JSON.stringify(db, null, 2);
+    const content = ENCRYPTION_PASSPHRASE ? encryptPayload(rawJson, ENCRYPTION_PASSPHRASE) : rawJson;
     fs.writeFileSync(backupPath, content, 'utf-8');
 
     db.lastBackupDate = new Date().toISOString();
@@ -446,16 +471,27 @@ class DatabaseEngine {
       filename,
       timestamp: new Date().toISOString(),
       sizeBytes: Buffer.byteLength(content, 'utf-8'),
+      isEncrypted: Boolean(ENCRYPTION_PASSPHRASE),
     };
   }
 
-  public restore(importedData: DatabaseState): boolean {
-    if (!importedData.interactions || !importedData.coworkers) {
+  public restore(importedData: any): boolean {
+    let state = importedData;
+    if (typeof importedData === 'string') {
+      try {
+        state = JSON.parse(importedData);
+      } catch {}
+    }
+    if (state && state._encrypted === true) {
+      const decrypted = decryptPayload(JSON.stringify(state), ENCRYPTION_PASSPHRASE);
+      state = JSON.parse(decrypted);
+    }
+    if (!state || !state.interactions || !state.coworkers) {
       throw new Error('Invalid backup schema format');
     }
     // Auto-backup current state before restoring
     this.createBackup();
-    this.writeToDisk(importedData);
+    this.writeToDisk(state as DatabaseState);
     return true;
   }
 
@@ -466,13 +502,26 @@ class DatabaseEngine {
   public getSystemInfo() {
     const db = this.readFromDisk();
     let dbSize = 0;
+    let isEncrypted = false;
     try {
       if (fs.existsSync(DB_FILE)) {
         dbSize = fs.statSync(DB_FILE).size;
+        const snippet = fs.readFileSync(DB_FILE, 'utf-8').slice(0, 200);
+        isEncrypted = snippet.includes('"_encrypted": true');
       }
     } catch {}
 
     const backupFiles = fs.existsSync(BACKUPS_DIR) ? fs.readdirSync(BACKUPS_DIR) : [];
+
+    const encryption: EncryptionInfo = {
+      enabled: Boolean(ENCRYPTION_PASSPHRASE),
+      algo: 'AES-256-GCM',
+      kdf: 'scrypt',
+      isEncryptedOnDisk: isEncrypted,
+      status: Boolean(ENCRYPTION_PASSPHRASE)
+        ? (isEncrypted ? 'Active (AES-256-GCM)' : 'Passphrase Active (Encrypting on next save)')
+        : (isEncrypted ? 'Locked (Passphrase Required)' : 'Disabled (Plaintext Storage)'),
+    };
 
     return {
       dataPath: DATA_DIR,
@@ -485,6 +534,7 @@ class DatabaseEngine {
       isSelfHosted: true,
       environment: process.env.NODE_ENV || 'development',
       platform: process.platform,
+      encryption,
     };
   }
 }

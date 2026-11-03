@@ -10,6 +10,9 @@ services:
       - PORT=3000
       - DATA_DIR=/data
       - NODE_ENV=production
+      # Optional: AES-256-GCM encryption at rest on the Unraid server array
+      # - ENCRYPTION_PASSPHRASE=your-strong-passphrase-here
     volumes:
       # Map to Unraid appdata array for permanent, private, parity-protected storage
       - /mnt/user/appdata/cadence:/data
+

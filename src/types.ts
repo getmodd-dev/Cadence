@@ -107,6 +107,14 @@ export interface DailyCheckin {
   associatedIncidentId?: string;
 }
 
+export interface EncryptionInfo {
+  enabled: boolean;
+  algo: string;
+  kdf: string;
+  isEncryptedOnDisk: boolean;
+  status: string;
+}
+
 export interface SystemStatus {
   dataPath: string;
   dbFilePath: string;
@@ -118,6 +126,8 @@ export interface SystemStatus {
   isSelfHosted: boolean;
   environment: string;
   platform: string;
+  encryption?: EncryptionInfo;
 }
 
 export type ActiveTab = 'home' | 'calendar' | 'custom_report' | 'timeline' | 'analytics' | 'dossier' | 'unraid';
+

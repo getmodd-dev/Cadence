@@ -13,7 +13,15 @@ import {
   Trash2,
   FolderLock,
   Lock,
-  AlertTriangle,
+  Unlock,
+  Key,
+  Terminal,
+  ExternalLink,
+  Cpu,
+  Layers,
+  Sparkles,
+  CheckCircle2,
+  Code2,
 } from 'lucide-react';
 
 interface UnraidGuideViewProps {
@@ -27,6 +35,18 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [activeTab, setActiveTab] = useState<'deployment' | 'encryption' | 'ghcr'>('deployment');
+
+  // GHCR state
+  const [ghUsername, setGhUsername] = useState('your-github-username');
+
+  // Key generator state
+  const [generatingKey, setGeneratingKey] = useState(false);
+  const [generatedKey, setGeneratedKey] = useState<{
+    hexKey: string;
+    suggestedPassphrase: string;
+    sampleEnv: string;
+  } | null>(null);
 
   const fetchStatus = async () => {
     try {
@@ -48,6 +68,18 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
     navigator.clipboard.writeText(text);
     setCopiedSnippet(id);
     setTimeout(() => setCopiedSnippet(null), 2000);
+  };
+
+  const handleGenerateKey = async () => {
+    try {
+      setGeneratingKey(true);
+      const creds = await api.generateEncryptionKey();
+      setGeneratedKey(creds);
+    } catch (err: any) {
+      alert('Failed to generate encryption key: ' + err.message);
+    } finally {
+      setGeneratingKey(false);
+    }
   };
 
   const handleCreateBackup = async () => {
@@ -89,9 +121,12 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
     }
   };
 
+  const cleanGhUser = ghUsername.trim() || 'your-github-username';
+  const ghcrImageTag = `ghcr.io/${cleanGhUser.toLowerCase()}/cadence:latest`;
+
   const dockerComposeSnippet = `services:
   cadence:
-    image: cadence:latest
+    image: ${ghcrImageTag}
     container_name: cadence
     restart: unless-stopped
     ports:
@@ -100,31 +135,81 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
       - PORT=3000
       - DATA_DIR=/data
       - NODE_ENV=production
+      # Optional: AES-256-GCM encryption at rest for database.json & snapshots
+      # - ENCRYPTION_PASSPHRASE=your-strong-passphrase-here
     volumes:
       # Map to Unraid appdata share for private, parity-protected storage
       - /mnt/user/appdata/cadence:/data
 `;
 
-  const dockerRunSnippet = `docker run -d \\
-  --name=cadence \\
-  --restart=unless-stopped \\
-  -p 3000:3000 \\
-  -e PORT=3000 \\
-  -e DATA_DIR=/data \\
-  -e NODE_ENV=production \\
-  -v /mnt/user/appdata/cadence:/data \\
-  cadence:latest`;
+  const ghActionsWorkflowSnippet = `name: Build and Push Docker Image to GHCR
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: \${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-platform amd64 & arm64)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: \${{ env.REGISTRY }}
+          username: \${{ github.actor }}
+          password: \${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: \${{ env.REGISTRY }}/\${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=\${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: \${{ steps.meta.outputs.tags }}
+          labels: \${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+`;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-8">
-      {/* Overview */}
+      {/* Overview Header */}
       <div className="border-b border-slate-800 pb-4">
         <h1 className="text-xl font-bold tracking-tight text-slate-100 flex items-center gap-2">
           <Server className="w-5 h-5 text-indigo-400" />
-          <span>Unraid Server & Self-Hosted Database</span>
+          <span>Cadence Deployment & Security Engine</span>
         </h1>
         <p className="text-xs text-slate-400 mt-1">
-          Zero third-party tracking. Your sensitive workplace documentation resides entirely within your private home network or homelab.
+          Zero third-party tracking or cloud telemetry. Host your private workplace documentation on your Unraid server with transparent AES-256-GCM encryption and GitHub Container Registry distribution.
         </p>
       </div>
 
@@ -165,9 +250,19 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
               </span>
             </div>
             <div className="p-3 rounded bg-slate-950 border border-slate-800">
-              <span className="text-slate-400 block">Local Backups</span>
-              <span className="font-mono text-slate-200 block mt-0.5">
-                {status.backupCount} snapshots
+              <span className="text-slate-400 block">Encryption at Rest</span>
+              <span className="block mt-0.5">
+                {status.encryption?.enabled ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                    <Lock className="w-3 h-3" />
+                    AES-256-GCM Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-amber-400 font-medium">
+                    <Unlock className="w-3 h-3" />
+                    Plaintext (No key set)
+                  </span>
+                )}
               </span>
             </div>
           </div>
@@ -201,7 +296,7 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
               className="px-3 py-1.5 rounded text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors flex items-center gap-1.5"
             >
               <Download className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Download Full Backup</span>
+              <span>Download Backup</span>
             </a>
           </div>
 
@@ -235,8 +330,9 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
         </div>
 
         {backupSuccess && (
-          <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded text-xs text-emerald-300">
-            {backupSuccess}
+          <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded text-xs text-emerald-300 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>{backupSuccess}</span>
           </div>
         )}
 
@@ -247,130 +343,484 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
         )}
       </div>
 
-      {/* Unraid Step-by-Step Setup Instructions */}
-      <div className="space-y-6">
-        <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-          <span>Unraid Server Deployment Guide</span>
-        </h2>
+      {/* Guide Section Tabs */}
+      <div className="border-b border-slate-800">
+        <div className="flex space-x-1 sm:space-x-4">
+          <button
+            onClick={() => setActiveTab('deployment')}
+            className={`pb-3 px-2 text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors ${
+              activeTab === 'deployment'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Server className="w-4 h-4" />
+            <span>1. Unraid Deployment</span>
+          </button>
 
-        {/* Step 1: Volume Mapping */}
-        <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
-              1
-            </span>
-            <h3 className="text-sm font-semibold text-slate-200">
-              Unraid Appdata Share & Volume Mapping
-            </h3>
-          </div>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            In Unraid, persistent container files should reside in your <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">/mnt/user/appdata</code> share. This ensures that every entry you log is protected by your Unraid parity array and automatically included in CA Appdata Backup.
-          </p>
+          <button
+            onClick={() => setActiveTab('encryption')}
+            className={`pb-3 px-2 text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors ${
+              activeTab === 'encryption'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Lock className="w-4 h-4" />
+            <span>2. Server-Side Encryption</span>
+          </button>
 
-          <div className="bg-slate-950 p-3 rounded border border-slate-800/80 text-xs font-mono space-y-1">
-            <div className="text-slate-400">Container Path: <span className="text-emerald-400">/data</span></div>
-            <div className="text-slate-400">Host Path (Unraid): <span className="text-indigo-400">/mnt/user/appdata/cadence</span></div>
-            <div className="text-slate-400">Container Port: <span className="text-amber-400">3000</span> (or any available port on host)</div>
-          </div>
-        </div>
-
-        {/* Step 2: Docker Run / Compose Command */}
-        <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
-                2
-              </span>
-              <h3 className="text-sm font-semibold text-slate-200">
-                Docker Compose Configuration (Unraid Docker Compose Plugin)
-              </h3>
-            </div>
-            <button
-              onClick={() => handleCopy(dockerComposeSnippet, 'compose')}
-              className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1"
-            >
-              {copiedSnippet === 'compose' ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  <span className="text-emerald-400">Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" />
-                  <span>Copy YAML</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <pre className="p-3.5 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed">
-            {dockerComposeSnippet}
-          </pre>
-        </div>
-
-        {/* Step 3: Unraid Docker GUI Fields */}
-        <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
-              3
-            </span>
-            <h3 className="text-sm font-semibold text-slate-200">
-              Unraid GUI Setup (Add Container)
-            </h3>
-          </div>
-          <p className="text-xs text-slate-400">
-            If using Unraid&apos;s standard &ldquo;Add Container&rdquo; web interface, configure the following parameters:
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3 bg-slate-950 rounded border border-slate-800">
-              <span className="text-slate-400 block font-semibold">Name</span>
-              <span className="text-slate-200 font-mono">cadence</span>
-            </div>
-            <div className="p-3 bg-slate-950 rounded border border-slate-800">
-              <span className="text-slate-400 block font-semibold">Repository</span>
-              <span className="text-slate-200 font-mono">cadence:latest</span>
-            </div>
-            <div className="p-3 bg-slate-950 rounded border border-slate-800">
-              <span className="text-slate-400 block font-semibold">Network Type</span>
-              <span className="text-slate-200 font-mono">Bridge</span>
-            </div>
-            <div className="p-3 bg-slate-950 rounded border border-slate-800">
-              <span className="text-slate-400 block font-semibold">Port 1 (Web UI)</span>
-              <span className="text-slate-200 font-mono">Host: 3000 | Container: 3000</span>
-            </div>
-            <div className="p-3 bg-slate-950 rounded border border-slate-800 sm:col-span-2">
-              <span className="text-slate-400 block font-semibold">Path 1 (Persistent Database)</span>
-              <span className="text-slate-200 font-mono">
-                Host Path: /mnt/user/appdata/cadence | Container Path: /data
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Security & Confidentiality Best Practices */}
-        <div className="bg-indigo-950/30 border border-indigo-900/50 rounded-lg p-5 space-y-3">
-          <div className="flex items-center gap-2 text-indigo-300 font-semibold text-sm">
-            <Shield className="w-4 h-4 text-indigo-400" />
-            <span>Workplace Privacy & Security Best Practices</span>
-          </div>
-
-          <ul className="text-xs text-indigo-200/80 space-y-2 list-disc list-inside leading-relaxed">
-            <li>
-              <strong>Never port forward to the public internet:</strong> Keep this service accessible only via your local home Wi-Fi or securely over Tailscale/WireGuard.
-            </li>
-            <li>
-              <strong>Do not access from corporate VPN without split-tunneling:</strong> If logging incidents during the workday, use a personal device (phone/tablet) connected to your Unraid host, or ensure corporate network inspection cannot observe your private traffic.
-            </li>
-            <li>
-              <strong>Enable Passcode Lock:</strong> Set a 4-6 digit PIN in the top right menu to prevent curious household members or colleagues from viewing your logs.
-            </li>
-            <li>
-              <strong>Use the &ldquo;Stealth&rdquo; shortcut (Esc):</strong> Immediately blurs names and text if someone approaches your screen.
-            </li>
-          </ul>
+          <button
+            onClick={() => setActiveTab('ghcr')}
+            className={`pb-3 px-2 text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors ${
+              activeTab === 'ghcr'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Terminal className="w-4 h-4" />
+            <span>3. Build & Push to GHCR</span>
+          </button>
         </div>
       </div>
+
+      {/* TAB 1: UNRAID DEPLOYMENT */}
+      {activeTab === 'deployment' && (
+        <div className="space-y-6">
+          {/* Step 1: Volume Mapping */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                1
+              </span>
+              <h3 className="text-sm font-semibold text-slate-200">
+                Unraid Appdata Share & Volume Mapping
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              In Unraid, container storage resides in your <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">/mnt/user/appdata</code> share. This guarantees that your log entries are protected by your Unraid parity array and automatically covered by the Community Applications Appdata Backup plugin.
+            </p>
+
+            <div className="bg-slate-950 p-3 rounded border border-slate-800/80 text-xs font-mono space-y-1">
+              <div className="text-slate-400">Container Path: <span className="text-emerald-400">/data</span></div>
+              <div className="text-slate-400">Host Path (Unraid): <span className="text-indigo-400">/mnt/user/appdata/cadence</span></div>
+              <div className="text-slate-400">Container Port: <span className="text-amber-400">3000</span> (Web UI)</div>
+            </div>
+          </div>
+
+          {/* Step 2: Docker Compose */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                  2
+                </span>
+                <h3 className="text-sm font-semibold text-slate-200">
+                  Docker Compose Configuration (docker-compose.yml)
+                </h3>
+              </div>
+              <button
+                onClick={() => handleCopy(dockerComposeSnippet, 'compose')}
+                className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1"
+              >
+                {copiedSnippet === 'compose' ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy YAML</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <pre className="p-3.5 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed">
+              {dockerComposeSnippet}
+            </pre>
+          </div>
+
+          {/* Step 3: Unraid Docker GUI Fields */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                3
+              </span>
+              <h3 className="text-sm font-semibold text-slate-200">
+                Unraid GUI Setup (Docker &gt; Add Container)
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400">
+              If deploying via the standard Unraid WebGUI, configure the following container values:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                <span className="text-slate-400 block font-semibold">Name</span>
+                <span className="text-slate-200 font-mono">cadence</span>
+              </div>
+              <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                <span className="text-slate-400 block font-semibold">Repository</span>
+                <span className="text-slate-200 font-mono">{ghcrImageTag}</span>
+              </div>
+              <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                <span className="text-slate-400 block font-semibold">Network Type</span>
+                <span className="text-slate-200 font-mono">Bridge</span>
+              </div>
+              <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                <span className="text-slate-400 block font-semibold">WebUI Port (Port 3000)</span>
+                <span className="text-slate-200 font-mono">Host: 3000 | Container: 3000</span>
+              </div>
+              <div className="p-3 bg-slate-950 rounded border border-slate-800 sm:col-span-2">
+                <span className="text-slate-400 block font-semibold">Data Volume (Path 1)</span>
+                <span className="text-slate-200 font-mono">
+                  Host Path: /mnt/user/appdata/cadence | Container Path: /data
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: SERVER-SIDE ENCRYPTION */}
+      {activeTab === 'encryption' && (
+        <div className="space-y-6">
+          {/* Encryption Overview Card */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-sm font-semibold text-slate-100">
+                  How Server-Side Encryption Works
+                </h3>
+              </div>
+              <div className="text-xs">
+                {status?.encryption?.enabled ? (
+                  <span className="px-2.5 py-1 rounded bg-emerald-950 border border-emerald-500/40 text-emerald-300 font-mono flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" />
+                    AES-256-GCM Active
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded bg-amber-950/60 border border-amber-500/40 text-amber-300 font-mono flex items-center gap-1.5">
+                    <Unlock className="w-3.5 h-3.5" />
+                    Plaintext on Disk
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              To guarantee total privacy of sensitive coworker notes and contemporaneous workplace records, Cadence supports two complementary layers of server-side encryption:
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-indigo-400 font-semibold text-xs">
+                  <Cpu className="w-4 h-4" />
+                  <span>Layer 1: Built-In AES-256-GCM (Application Level)</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Cadence encrypts <code className="text-slate-200 bg-slate-900 px-1 py-0.5 rounded">database.json</code> and snapshot archives before writing them to the file system using <strong>AES-256-GCM authenticated encryption</strong> with <strong>scrypt key derivation</strong>. Even if someone inspects the raw files in your appdata share or takes a backup tarball, they cannot read any text without the passphrase.
+                </p>
+                <div className="text-[11px] text-slate-400 font-mono pt-1">
+                  Enabling: Set container env <code className="text-emerald-400">ENCRYPTION_PASSPHRASE</code>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-sky-400 font-semibold text-xs">
+                  <Layers className="w-4 h-4" />
+                  <span>Layer 2: Unraid Native LUKS (Disk Level)</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Unraid natively supports full array or cache pool encryption via <strong>LUKS (XFS encrypted)</strong>. Data is encrypted transparently on physical disk sectors with hardware <strong>AES-NI</strong> acceleration. If physical hard drives or your server are stolen, the drives cannot be mounted or read without the Unraid array master passphrase.
+                </p>
+                <div className="text-[11px] text-slate-400 font-mono pt-1">
+                  Enabling: Format Unraid cache/data drives as <code className="text-sky-300">xfs - encrypted</code>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Passphrase Generator Tool */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-slate-200">
+                  Generate High-Entropy Encryption Passphrase
+                </h3>
+              </div>
+              <button
+                onClick={handleGenerateKey}
+                disabled={generatingKey}
+                className="px-3 py-1.5 rounded text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{generatingKey ? 'Generating...' : 'Generate New Credentials'}</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">
+              Click to generate a cryptographically secure 256-bit hex key and a readable high-entropy passphrase. You can supply either format to <code className="text-indigo-300">ENCRYPTION_PASSPHRASE</code>.
+            </p>
+
+            {generatedKey && (
+              <div className="space-y-3 pt-2">
+                <div className="p-3 bg-slate-950 rounded border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Suggested Passphrase (Memorizable / Diceware)
+                    </span>
+                    <button
+                      onClick={() => handleCopy(generatedKey.suggestedPassphrase, 'phrase')}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-mono"
+                    >
+                      {copiedSnippet === 'phrase' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedSnippet === 'phrase' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <div className="font-mono text-xs text-emerald-300 bg-slate-900/80 p-2 rounded break-all select-all">
+                    {generatedKey.suggestedPassphrase}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Raw 256-bit Hex Key (Direct 32-byte key)
+                    </span>
+                    <button
+                      onClick={() => handleCopy(generatedKey.hexKey, 'hex')}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-mono"
+                    >
+                      {copiedSnippet === 'hex' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedSnippet === 'hex' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <div className="font-mono text-xs text-slate-300 bg-slate-900/80 p-2 rounded break-all select-all">
+                    {generatedKey.hexKey}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Docker Environment Variable Line
+                    </span>
+                    <button
+                      onClick={() => handleCopy(generatedKey.sampleEnv, 'env')}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-mono"
+                    >
+                      {copiedSnippet === 'env' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedSnippet === 'env' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <div className="font-mono text-xs text-amber-300 bg-slate-900/80 p-2 rounded break-all select-all">
+                    {generatedKey.sampleEnv}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* How to configure on Unraid */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                !
+              </span>
+              <span>Enabling Encryption in Unraid Container Settings</span>
+            </h3>
+
+            <ol className="text-xs text-slate-300 space-y-2 list-decimal list-inside leading-relaxed">
+              <li>In your Unraid WebGUI, open the <strong>Docker</strong> tab.</li>
+              <li>Click on the <strong>cadence</strong> container icon and select <strong>Edit</strong>.</li>
+              <li>Scroll to the bottom and click <strong>&ldquo;Add another Path, Port, Variable, label or device&rdquo;</strong>.</li>
+              <li>Set <strong>Config Type</strong> to <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">Variable</code>.</li>
+              <li>Set <strong>Name</strong> to <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">Encryption Passphrase</code>.</li>
+              <li>Set <strong>Key</strong> to <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">ENCRYPTION_PASSPHRASE</code>.</li>
+              <li>Paste your generated passphrase into <strong>Value</strong> and click <strong>Save</strong>.</li>
+              <li>Click <strong>Apply</strong> to restart the container.</li>
+            </ol>
+
+            <div className="p-3 bg-indigo-950/40 border border-indigo-800/40 rounded text-xs text-indigo-300 mt-3">
+              <strong>Seamless Zero-Loss Migration:</strong> If you already have existing records saved in plaintext, Cadence automatically detects them on startup, verifies the data, and transparently upgrades the file to AES-256-GCM encryption on the next write!
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: BUILD & PUSH TO GHCR */}
+      {activeTab === 'ghcr' && (
+        <div className="space-y-6">
+          {/* GHCR Intro */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Code2 className="w-5 h-5 text-indigo-400" />
+              <h3 className="text-sm font-semibold text-slate-100">
+                GitHub Container Registry (ghcr.io) Overview
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              GitHub Container Registry (<code className="text-indigo-300">ghcr.io</code>) is the official Docker image registry built into GitHub. It gives you <strong>free private or public container image hosting</strong> directly attached to your GitHub repo, with no rate-limiting or 6-month inactivity image deletion (unlike Docker Hub free tier).
+            </p>
+
+            <div className="pt-2 flex items-center gap-3">
+              <div className="flex-1 max-w-sm">
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  Your GitHub Username / Organization:
+                </label>
+                <input
+                  type="text"
+                  value={ghUsername}
+                  onChange={(e) => setGhUsername(e.target.value)}
+                  placeholder="e.g. johndoe"
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div className="text-xs text-slate-400 pt-5">
+                Target Image: <code className="text-emerald-400 font-mono font-semibold">{ghcrImageTag}</code>
+              </div>
+            </div>
+          </div>
+
+          {/* Step 1: Create GitHub PAT */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                1
+              </span>
+              <h3 className="text-sm font-semibold text-slate-200">
+                Create a GitHub Personal Access Token (PAT)
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              To push Docker images from your local machine terminal to GHCR, create a personal access token:
+            </p>
+            <ol className="text-xs text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
+              <li>Open GitHub &gt; <strong>Settings</strong> &gt; <strong>Developer Settings</strong> &gt; <strong>Personal Access Tokens (Tokens classic)</strong>.</li>
+              <li>Click <strong>Generate new token (classic)</strong>.</li>
+              <li>Select the <code className="text-emerald-400 bg-slate-950 px-1 py-0.5 rounded font-mono">write:packages</code> and <code className="text-emerald-400 bg-slate-950 px-1 py-0.5 rounded font-mono">read:packages</code> scopes.</li>
+              <li>Click <strong>Generate token</strong> and copy the token string (starts with <code className="text-slate-400">ghp_...</code>).</li>
+            </ol>
+          </div>
+
+          {/* Step 2: Docker Login */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                  2
+                </span>
+                <h3 className="text-sm font-semibold text-slate-200">
+                  Log in to GitHub Container Registry via CLI
+                </h3>
+              </div>
+              <button
+                onClick={() =>
+                  handleCopy(
+                    `export CR_PAT=YOUR_GITHUB_PAT\necho $CR_PAT | docker login ghcr.io -u ${cleanGhUser} --password-stdin`,
+                    'cli-login'
+                  )
+                }
+                className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1"
+              >
+                {copiedSnippet === 'cli-login' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedSnippet === 'cli-login' ? 'Copied' : 'Copy Command'}</span>
+              </button>
+            </div>
+            <pre className="p-3 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto">
+              {`export CR_PAT=YOUR_GITHUB_PAT\necho $CR_PAT | docker login ghcr.io -u ${cleanGhUser} --password-stdin`}
+            </pre>
+          </div>
+
+          {/* Step 3: Build & Push Image */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                  3
+                </span>
+                <h3 className="text-sm font-semibold text-slate-200">
+                  Build and Push the Image
+                </h3>
+              </div>
+              <button
+                onClick={() =>
+                  handleCopy(
+                    `# Build image from local Dockerfile\ndocker build -t ${ghcrImageTag} .\n\n# Push image to GitHub Container Registry\ndocker push ${ghcrImageTag}`,
+                    'cli-build-push'
+                  )
+                }
+                className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1"
+              >
+                {copiedSnippet === 'cli-build-push' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedSnippet === 'cli-build-push' ? 'Copied' : 'Copy Commands'}</span>
+              </button>
+            </div>
+            <pre className="p-3 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed">
+              {`# Build image from local Dockerfile\ndocker build -t ${ghcrImageTag} .\n\n# Push image to GitHub Container Registry\ndocker push ${ghcrImageTag}`}
+            </pre>
+          </div>
+
+          {/* Step 4: Setting Package Visibility */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                4
+              </span>
+              <h3 className="text-sm font-semibold text-slate-200">
+                Make Package Public for Unraid (Or Authenticate Unraid)
+              </h3>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              By default, newly pushed GHCR packages are private. You have two convenient options:
+            </p>
+            <div className="space-y-2 text-xs">
+              <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                <span className="text-emerald-400 font-semibold block mb-1">Option A: Make Package Public (Easiest for Unraid)</span>
+                <p className="text-slate-400 leading-relaxed">
+                  Go to your GitHub Profile &gt; <strong>Packages</strong> &gt; click <strong>cadence</strong> &gt; <strong>Package settings</strong> &gt; scroll to bottom &gt; <strong>Change package visibility</strong> &gt; select <strong>Public</strong>. Now Unraid can pull the image without any Docker credentials.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                <span className="text-indigo-400 font-semibold block mb-1">Option B: Keep Package Private</span>
+                <p className="text-slate-400 leading-relaxed">
+                  Log in on your Unraid server terminal once: <code className="text-slate-300">echo $PAT | docker login ghcr.io -u {cleanGhUser} --password-stdin</code>. Unraid will store the credential in its Docker daemon and pull private images automatically.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Automated CI/CD Workflow */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-slate-200">
+                  Automated GitHub Actions CI/CD Workflow Included
+                </h3>
+              </div>
+              <button
+                onClick={() => handleCopy(ghActionsWorkflowSnippet, 'workflow')}
+                className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1"
+              >
+                {copiedSnippet === 'workflow' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedSnippet === 'workflow' ? 'Copied' : 'Copy Workflow'}</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">
+              This repository already contains <code className="text-indigo-300">.github/workflows/docker-publish.yml</code>. Whenever you push code to GitHub or create a version tag, GitHub Actions automatically builds multi-arch (<code className="text-slate-300">amd64</code> &amp; <code className="text-slate-300">arm64</code>) and pushes to GHCR with zero manual commands:
+            </p>
+            <pre className="p-3.5 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-400 overflow-x-auto leading-relaxed max-h-56">
+              {ghActionsWorkflowSnippet}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
