@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS builder
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies
+# Set memory limit to prevent QEMU OOM during multi-arch buildx (amd64 / arm64)
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Install dependencies (all multi-arch native bindings are declared in package.json)
 COPY package*.json ./
 RUN if [ -f package-lock.json ]; then npm ci || npm install; else npm install; fi
 
@@ -12,7 +15,7 @@ COPY . .
 RUN npm run build
 
 # Production runtime stage
-FROM node:22-alpine AS runner
+FROM node:22-bookworm-slim AS runner
 
 WORKDIR /app
 
