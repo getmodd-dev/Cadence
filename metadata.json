@@ -1,0 +1,6 @@
+{
+  "name": "Logbook: Workplace Interaction Journal",
+  "description": "Fast, private, self-hosted workplace interaction logger and contemporaneous incident journal for Unraid and local servers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

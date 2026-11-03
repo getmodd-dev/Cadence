@@ -1,0 +1,15 @@
+services:
+  cadence:
+    build: .
+    image: cadence:latest
+    container_name: cadence
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATA_DIR=/data
+      - NODE_ENV=production
+    volumes:
+      # Map to Unraid appdata array for permanent, private, parity-protected storage
+      - /mnt/user/appdata/cadence:/data
