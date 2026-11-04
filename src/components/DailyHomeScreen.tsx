@@ -101,10 +101,12 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
   const [isCheckinCollapsed, setIsCheckinCollapsed] = useState(false);
   const [isClearingDaily, setIsClearingDaily] = useState(false);
   const [confirmClearDaily, setConfirmClearDaily] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Reset clear confirmation when date or coworker changes
+  // Reset clear confirmation and errors when date or coworker changes
   useEffect(() => {
     setConfirmClearDaily(false);
+    setActionError(null);
   }, [selectedDate, coworkerId]);
 
   // Load existing log for selected date
@@ -128,6 +130,7 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSaving(true);
+    setActionError(null);
     try {
       const selectedCw = coworkers.find((c) => c.id === coworkerId) || primaryCoworker;
       await onSaveDailyLog({
@@ -143,7 +146,7 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (err: any) {
-      alert(err.message || 'Failed to save daily log');
+      setActionError(err.message || 'Failed to save daily log');
     } finally {
       setIsSaving(false);
     }
@@ -151,6 +154,7 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
 
   const handleClearDailyLog = async () => {
     setIsClearingDaily(true);
+    setActionError(null);
     try {
       if (onDeleteDailyLog) {
         if (existingLog) {
@@ -166,7 +170,7 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
       setQuickNotes('');
       setConfirmClearDaily(false);
     } catch (err: any) {
-      alert(err.message || 'Failed to clear daily log');
+      setActionError(err.message || 'Failed to clear daily log');
     } finally {
       setIsClearingDaily(false);
     }
@@ -330,6 +334,18 @@ ${item.impactNotes || 'None'}
 
         {!isCheckinCollapsed && (
           <form onSubmit={handleSave} className="p-5 space-y-5">
+            {actionError && (
+              <div className="p-2.5 bg-rose-950/80 border border-rose-500/50 rounded-lg text-rose-200 text-xs flex items-center justify-between">
+                <span>{actionError}</span>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  className="text-rose-400 hover:text-rose-200 text-xs ml-2"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {/* 1. Was there an interaction? */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>

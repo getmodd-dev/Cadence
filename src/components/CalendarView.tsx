@@ -1,5 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DailyCheckin, Interaction, CoworkerProfile } from '../types';
+import { DailyLogModal } from './DailyLogModal';
+import {
+  formatDisplayDate,
+  getLocalTodayDate,
+  parseLocalDate,
+} from '../utils/dateUtils';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -18,25 +24,51 @@ import {
 } from 'lucide-react';
 
 interface CalendarViewProps {
+  selectedDate: string;
+  onSelectDate: (dateStr: string) => void;
   dailyLogs: DailyCheckin[];
   interactions: Interaction[];
   coworkers: CoworkerProfile[];
-  onSelectDateForLog: (dateStr: string) => void;
+  onSaveDailyLog: (log: Omit<DailyCheckin, 'id' | 'recordedAt'> & { id?: string }) => Promise<void>;
+  onDeleteDailyLog: (idOrDate: string, coworkerId?: string) => Promise<void>;
+  onSelectDateForLog?: (dateStr: string) => void;
   onOpenCustomReport: (prefill?: { date: string; coworkerId: string; notes?: string }) => void;
   stealthMode: boolean;
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
+  selectedDate,
+  onSelectDate,
   dailyLogs,
   interactions,
   coworkers,
+  onSaveDailyLog,
+  onDeleteDailyLog,
   onSelectDateForLog,
   onOpenCustomReport,
   stealthMode,
 }) => {
-  const today = new Date();
-  const [currentMonth, setCurrentMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
-  const [selectedDate, setSelectedDate] = useState<string>(today.toISOString().slice(0, 10));
+  const initialDateObj = parseLocalDate(selectedDate);
+  const [currentMonth, setCurrentMonth] = useState(
+    new Date(initialDateObj.getFullYear(), initialDateObj.getMonth(), 1)
+  );
+  const [isDailyLogModalOpen, setIsDailyLogModalOpen] = useState(false);
+
+  // Sync calendar month view when selectedDate changes externally
+  useEffect(() => {
+    if (selectedDate) {
+      const parts = selectedDate.split('-');
+      if (parts.length >= 2) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1;
+        if (!isNaN(y) && !isNaN(m)) {
+          if (currentMonth.getFullYear() !== y || currentMonth.getMonth() !== m) {
+            setCurrentMonth(new Date(y, m, 1));
+          }
+        }
+      }
+    }
+  }, [selectedDate]);
 
   const primaryCoworker = coworkers.find((c) => c.isPrimarySubject) || coworkers[0] || {
     id: 'cw_primary_default',
@@ -52,9 +84,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const handleToday = () => {
-    const now = new Date();
-    setCurrentMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-    setSelectedDate(now.toISOString().slice(0, 10));
+    const todayStr = getLocalTodayDate();
+    onSelectDate(todayStr);
+    const d = parseLocalDate(todayStr);
+    setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1));
   };
 
   // Generate calendar days
@@ -67,15 +100,22 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   const monthName = currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
 
-  // Month stats
+  // Month stats using timezone-safe direct string extraction
   const logsThisMonth = dailyLogs.filter((d) => {
-    const dObj = new Date(d.date);
-    return dObj.getFullYear() === year && dObj.getMonth() === month;
+    const parts = d.date.split('-');
+    if (parts.length < 2) return false;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    return y === year && m === month;
   });
 
   const incidentsThisMonth = interactions.filter((i) => {
-    const dObj = new Date(i.timestamp);
-    return dObj.getFullYear() === year && dObj.getMonth() === month;
+    const dStr = i.timestamp.slice(0, 10);
+    const parts = dStr.split('-');
+    if (parts.length < 2) return false;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    return y === year && m === month;
   });
 
   const interactionDaysCount = logsThisMonth.filter((d) => d.hadInteraction).length;
@@ -204,7 +244,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             {Array.from({ length: daysInMonth }).map((_, idx) => {
               const dayNum = idx + 1;
               const dateStr = `${year}-${pad(month + 1)}-${pad(dayNum)}`;
-              const isToday = dateStr === today.toISOString().slice(0, 10);
+              const isCurrentDay = dateStr === getLocalTodayDate();
               const isSelected = dateStr === selectedDate;
 
               const log = dailyLogs.find((d) => d.date === dateStr);
@@ -237,7 +277,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 <button
                   key={dateStr}
                   type="button"
-                  onClick={() => setSelectedDate(dateStr)}
+                  onClick={() => onSelectDate(dateStr)}
+                  onDoubleClick={() => {
+                    onSelectDate(dateStr);
+                    setIsDailyLogModalOpen(true);
+                  }}
                   className={`min-h-[75px] sm:min-h-[88px] p-2 rounded-lg border text-left transition-all flex flex-col justify-between ${
                     isSelected ? 'ring-2 ring-indigo-500 shadow-md ' : ''
                   }${cellBorder} ${!log ? 'bg-slate-950/70' : ''}`}
@@ -246,7 +290,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   <div className="flex items-center justify-between w-full">
                     <span
                       className={`font-mono text-xs font-semibold ${
-                        isToday
+                        isCurrentDay
                           ? 'w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold'
                           : 'text-slate-300'
                       }`}
@@ -310,8 +354,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               <span className="text-[11px] font-mono text-slate-400 uppercase tracking-wider block">
                 Selected Day Inspector
               </span>
-              <h2 className="text-base font-bold text-slate-100 mt-0.5">
-                {new Date(selectedDate + 'T12:00:00').toLocaleDateString(undefined, {
+              <h2 className="text-base font-bold text-slate-100 mt-0.5 font-mono">
+                {formatDisplayDate(selectedDate, {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
@@ -320,13 +364,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               </h2>
             </div>
 
-            <button
-              onClick={() => onSelectDateForLog(selectedDate)}
-              className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors flex items-center gap-1"
-            >
-              <span>{selectedLog ? 'Edit Daily' : 'Log Daily'}</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsDailyLogModalOpen(true)}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors flex items-center gap-1.5 shadow-sm"
+              >
+                <span>{selectedLog ? 'Edit Daily' : 'Log Daily'}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Daily Check-in Summary */}
@@ -387,10 +434,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               <Clock className="w-6 h-6 text-slate-600 mx-auto" />
               <p className="text-slate-400">No daily interaction pulse logged for this date.</p>
               <button
-                onClick={() => onSelectDateForLog(selectedDate)}
-                className="text-xs text-indigo-400 hover:text-indigo-300 underline"
+                type="button"
+                onClick={() => setIsDailyLogModalOpen(true)}
+                className="text-xs text-indigo-400 hover:text-indigo-300 underline font-medium"
               >
-                Log daily check-in for {selectedDate}
+                Log daily check-in for {formatDisplayDate(selectedDate, { month: 'short', day: 'numeric' })}
               </button>
             </div>
           )}
@@ -451,6 +499,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Daily Interaction Log Modal with Forward / Back / Today & Clear button */}
+      <DailyLogModal
+        isOpen={isDailyLogModalOpen}
+        onClose={() => setIsDailyLogModalOpen(false)}
+        selectedDate={selectedDate}
+        onSelectDate={onSelectDate}
+        coworkers={coworkers}
+        dailyLogs={dailyLogs}
+        onSaveDailyLog={onSaveDailyLog}
+        onDeleteDailyLog={onDeleteDailyLog}
+        onOpenCustomReport={onOpenCustomReport}
+        stealthMode={stealthMode}
+      />
     </div>
   );
 };

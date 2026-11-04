@@ -428,6 +428,18 @@ app.get('/api/system/status', (_req: Request, res: Response) => {
   }
 });
 
+// --- Unraid Template XML Export ---
+app.get('/api/unraid/template', (_req: Request, res: Response) => {
+  try {
+    const templatePath = path.resolve(__dirname, 'unraid-template', 'cadence.xml');
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="cadence.xml"');
+    res.sendFile(templatePath);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ================= VITE DEV / STATIC SERVING =================
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -445,9 +457,28 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Logbook Server running on http://0.0.0.0:${PORT}`);
   });
+
+  // Graceful shutdown handling for Docker container updates and restarts
+  function handleShutdown(signal: string) {
+    console.log(`[Cadence Server] Received ${signal} (Docker update / shutdown). Performing safe flush...`);
+    try {
+      dbEngine.flushAndBackup(`shutdown_${signal.toLowerCase()}`);
+      console.log('[Cadence Server] Safe snapshot saved. Shutting down cleanly.');
+    } catch (err: any) {
+      console.error('[Cadence Server] Error during shutdown flush:', err.message);
+    }
+    server.close(() => {
+      process.exit(0);
+    });
+    // Fallback exit if connections linger
+    setTimeout(() => process.exit(0), 3000);
+  }
+
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
 }
 
 startServer().catch((err) => {

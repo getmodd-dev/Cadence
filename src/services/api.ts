@@ -213,6 +213,10 @@ export const api = {
     return '/api/export/csv';
   },
 
+  getUnraidTemplateUrl(): string {
+    return '/api/unraid/template';
+  },
+
   async generateEncryptionKey(): Promise<{
     hexKey: string;
     suggestedPassphrase: string;

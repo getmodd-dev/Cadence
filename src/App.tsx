@@ -17,11 +17,12 @@ import { UnraidGuideView } from './components/UnraidGuideView';
 import { PinLockModal } from './components/PinLockModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Loader2 } from 'lucide-react';
+import { getLocalTodayDate } from './utils/dateUtils';
 
 export default function App() {
   // Home screen opens by default with basic daily interactions
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [selectedDate, setSelectedDate] = useState<string>(getLocalTodayDate());
 
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyCheckin[]>([]);
@@ -142,6 +143,18 @@ export default function App() {
     });
   };
 
+  // Delete / clear handler for daily basic check-in
+  const handleDeleteDailyLog = async (idOrDate: string, coworkerId?: string) => {
+    await api.deleteDailyLog(idOrDate);
+    setDailyLogs((prev) =>
+      prev.filter((d) => {
+        if (d.id === idOrDate) return false;
+        if (d.date === idOrDate && (!coworkerId || d.coworkerId === coworkerId)) return false;
+        return true;
+      })
+    );
+  };
+
   // Open custom serious incident report
   const handleOpenCustomReport = (prefill?: {
     date: string;
@@ -251,6 +264,7 @@ export default function App() {
             coworkers={coworkers}
             dailyLogs={dailyLogs}
             onSaveDailyLog={handleSaveDailyLog}
+            onDeleteDailyLog={handleDeleteDailyLog}
             onOpenCustomReport={handleOpenCustomReport}
             onEditInteraction={handleEditClick}
             onDeleteInteraction={handleDeleteInteraction}
@@ -262,9 +276,13 @@ export default function App() {
         {/* TAB 2: Dedicated Calendar Section */}
         {activeTab === 'calendar' && (
           <CalendarView
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
             dailyLogs={dailyLogs}
             interactions={interactions}
             coworkers={coworkers}
+            onSaveDailyLog={handleSaveDailyLog}
+            onDeleteDailyLog={handleDeleteDailyLog}
             onSelectDateForLog={(date) => {
               setSelectedDate(date);
               setActiveTab('home');

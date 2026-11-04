@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>cadence</Name>
+  <Repository>ghcr.io/getmodd-dev/cadence:latest</Repository>
+  <Registry>https://ghcr.io/getmodd-dev/cadence</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/getmodd-dev/cadence</Support>
+  <Project>https://github.com/getmodd-dev/cadence</Project>
+  <Overview>Cadence is a private, contemporaneous workplace interaction &amp; incident documentation journal. All records are stored exclusively on your private Unraid server array with automatic snapshots and optional transparent AES-256-GCM encryption at rest.</Overview>
+  <Category>Productivity: Tools: Security:</Category>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/shield-check.svg</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Cadence: Private Workplace Interaction Documentation</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>3000</HostPort>
+        <ContainerPort>3000</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/cadence</HostDir>
+      <ContainerDir>/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>3000</Value>
+      <Name>PORT</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>/data</Value>
+      <Name>DATA_DIR</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value></Value>
+      <Name>ENCRYPTION_PASSPHRASE</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Labels/>
+  <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="Appdata Storage Path" Target="/data" Default="/mnt/user/appdata/cadence" Mode="rw" Description="Persistent database volume. CRITICAL: Mapped to /mnt/user/appdata/cadence so data persists across container updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/cadence</Config>
+  <Config Name="Data Directory Variable" Target="DATA_DIR" Default="/data" Mode="" Description="Internal container data directory path" Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
+  <Config Name="Encryption Passphrase (Optional)" Target="ENCRYPTION_PASSPHRASE" Default="" Mode="" Description="Optional AES-256-GCM encryption passphrase. If configured, database.json and snapshots are encrypted at rest on the array." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+</Container>

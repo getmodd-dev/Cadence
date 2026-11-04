@@ -34,8 +34,9 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [activeTab, setActiveTab] = useState<'deployment' | 'encryption' | 'ghcr'>('deployment');
+  const [activeTab, setActiveTab] = useState<'persistence' | 'deployment' | 'encryption' | 'ghcr'>('persistence');
 
   // GHCR state
   const [ghUsername, setGhUsername] = useState('your-github-username');
@@ -64,6 +65,11 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
     fetchStatus();
   }, []);
 
+  const showNotice = (text: string, isError = false) => {
+    setNotice({ text, isError });
+    setTimeout(() => setNotice(null), 5000);
+  };
+
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
     setCopiedSnippet(id);
@@ -75,8 +81,9 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
       setGeneratingKey(true);
       const creds = await api.generateEncryptionKey();
       setGeneratedKey(creds);
+      showNotice('Cryptographic key generated successfully.');
     } catch (err: any) {
-      alert('Failed to generate encryption key: ' + err.message);
+      showNotice('Failed to generate encryption key: ' + err.message, true);
     } finally {
       setGeneratingKey(false);
     }
@@ -89,7 +96,7 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
       fetchStatus();
       setTimeout(() => setBackupSuccess(null), 4000);
     } catch (err: any) {
-      alert(err.message || 'Failed to create backup');
+      showNotice(err.message || 'Failed to create backup', true);
     }
   };
 
@@ -103,7 +110,7 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
       await api.restoreDatabase(json);
       await onRefreshData();
       await fetchStatus();
-      alert('Database restored successfully from backup file!');
+      showNotice('Database restored successfully from backup file!');
     } catch (err: any) {
       setRestoreError('Invalid backup file: ' + err.message);
     }
@@ -115,9 +122,9 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
       await onRefreshData();
       await fetchStatus();
       setConfirmClear(false);
-      alert('All interaction records cleared.');
+      showNotice('All interaction records cleared.');
     } catch (err: any) {
-      alert(err.message);
+      showNotice(err.message, true);
     }
   };
 
@@ -341,11 +348,40 @@ jobs:
             {restoreError}
           </div>
         )}
+        {notice && (
+          <div
+            className={`p-3 rounded text-xs flex items-center justify-between border ${
+              notice.isError
+                ? 'bg-rose-950/60 border-rose-500/50 text-rose-200'
+                : 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+            }`}
+          >
+            <span>{notice.text}</span>
+            <button onClick={() => setNotice(null)} className="text-xs opacity-70 hover:opacity-100 ml-2">
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Guide Section Tabs */}
       <div className="border-b border-slate-800">
-        <div className="flex space-x-1 sm:space-x-4">
+        <div className="flex flex-wrap gap-2 sm:gap-4">
+          <button
+            onClick={() => setActiveTab('persistence')}
+            className={`pb-3 px-2 text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors ${
+              activeTab === 'persistence'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Shield className="w-4 h-4 text-emerald-400" />
+            <span>Docker Persistence & Safe Updates</span>
+            <span className="text-[10px] bg-emerald-950 border border-emerald-500/40 text-emerald-300 px-1.5 py-0.2 rounded font-mono">
+              Fix Data Loss
+            </span>
+          </button>
+
           <button
             onClick={() => setActiveTab('deployment')}
             className={`pb-3 px-2 text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors ${
@@ -383,6 +419,182 @@ jobs:
           </button>
         </div>
       </div>
+
+      {/* TAB 0: PERSISTENCE & SAFE DOCKER UPDATES */}
+      {activeTab === 'persistence' && (
+        <div className="space-y-6">
+          {/* Diagnostic Alert Box */}
+          <div className="p-4 sm:p-5 rounded-xl bg-amber-950/30 border border-amber-500/40 space-y-3">
+            <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>Why Data Gets Lost When Updating Docker & How It Is Solved</span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              When Docker updates a container (via <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">docker stop &amp;&amp; docker rm</code>, or clicking &quot;Update&quot; in Unraid), Docker <strong>deletes the old container</strong> and replaces it with a brand-new image layer. If your database is stored inside the container instead of a mapped host folder, your data disappears.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
+              <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1">
+                <span className="font-semibold text-rose-300 block">1. Missing Volume Mount</span>
+                <p className="text-slate-400 text-[11px]">
+                  Running without <code className="text-indigo-300">-v /mnt/user/appdata/cadence:/data</code> writes to temporary container storage that is destroyed on update.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1">
+                <span className="font-semibold text-amber-300 block">2. Host Permissions (UID 99)</span>
+                <p className="text-slate-400 text-[11px]">
+                  Unraid shares are owned by <code className="text-indigo-300">nobody:users</code>. The updated container includes an entrypoint that automatically sets write permissions so saves never fail.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1">
+                <span className="font-semibold text-emerald-300 block">3. Automated Pre-Update Snapshots</span>
+                <p className="text-slate-400 text-[11px]">
+                  Cadence now automatically creates a safety snapshot in <code className="text-indigo-300">/data/backups/</code> every time the container starts up.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Solution 1: Unraid XML Template */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center">
+                    ✓
+                  </span>
+                  <span>Permanent Fix for Unraid: Community Applications Template</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  The official <code className="text-indigo-300">cadence.xml</code> template locks your volume mapping permanently into Unraid so clicking &quot;Update Container&quot; never loses data.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href={api.getUnraidTemplateUrl()}
+                  download="cadence.xml"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center gap-1.5 shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download cadence.xml</span>
+                </a>
+              </div>
+            </div>
+
+            <div className="bg-slate-950 p-4 rounded-lg border border-slate-800/80 space-y-2 text-xs">
+              <span className="text-slate-300 font-semibold block">How to install the template into Unraid:</span>
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-400 text-[11px] leading-relaxed">
+                <li>
+                  Place the downloaded <code className="text-indigo-300">cadence.xml</code> file onto your Unraid flash drive at:
+                  <br />
+                  <code className="text-emerald-400 font-mono bg-slate-900 px-2 py-0.5 rounded mt-0.5 inline-block">
+                    /boot/config/plugins/dockerMan/templates-user/my-cadence.xml
+                  </code>
+                </li>
+                <li>
+                  In your Unraid WebGUI, go to <strong>Docker &gt; Add Container</strong>.
+                </li>
+                <li>
+                  In the <strong>Template</strong> dropdown at the top, select <strong>cadence</strong>.
+                </li>
+                <li>
+                  Unraid will automatically fill in the permanent host volume mapping:
+                  <div className="font-mono text-indigo-300 mt-1 pl-3 border-l-2 border-indigo-500/50">
+                    Host Path: /mnt/user/appdata/cadence &lt;---&gt; Container Path: /data (Mode: RW)
+                  </div>
+                </li>
+                <li>
+                  Click <strong>Apply</strong>. Now when you click &quot;Update&quot; on the Docker page, Unraid will preserve your data across every update!
+                </li>
+              </ol>
+            </div>
+          </div>
+
+          {/* Solution 2: Correct docker run command */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-sky-400" />
+                <span>Docker CLI: Safe Update Workflow</span>
+              </h3>
+
+              <button
+                onClick={() =>
+                  handleCopy(
+                    `# 1. Pull latest image\\ndocker pull ${ghcrImageTag}\\n\\n# 2. Stop and remove container (Host data is preserved!)\\ndocker stop cadence\\ndocker rm cadence\\n\\n# 3. Launch with host volume mounted\\ndocker run -d \\\\\\n  --name cadence \\\\\\n  --restart unless-stopped \\\\\\n  -p 3000:3000 \\\\\\n  -v /mnt/user/appdata/cadence:/data \\\\\\n  -e DATA_DIR=/data \\\\\\n  -e PORT=3000 \\\\\\n  ${ghcrImageTag}`,
+                    'cli-update'
+                  )
+                }
+                className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1 font-mono"
+              >
+                {copiedSnippet === 'cli-update' ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy Commands</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <pre className="p-3.5 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed">
+{`# 1. Pull the updated image
+docker pull ${ghcrImageTag}
+
+# 2. Stop and remove the old container (Host data in /mnt/user/appdata/cadence is 100% safe!)
+docker stop cadence
+docker rm cadence
+
+# 3. Launch the new container with the exact volume flag -v /mnt/user/appdata/cadence:/data
+docker run -d \\
+  --name cadence \\
+  --restart unless-stopped \\
+  -p 3000:3000 \\
+  -v /mnt/user/appdata/cadence:/data \\
+  -e DATA_DIR=/data \\
+  -e PORT=3000 \\
+  ${ghcrImageTag}`}
+            </pre>
+          </div>
+
+          {/* Solution 3: Docker Compose */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-lg p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-400" />
+                <span>Docker Compose: Zero-Downtime Safe Updates</span>
+              </h3>
+              <button
+                onClick={() => handleCopy('docker compose pull && docker compose up -d', 'compose-update')}
+                className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1 font-mono"
+              >
+                {copiedSnippet === 'compose-update' ? (
+                  <span className="text-emerald-400">Copied</span>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              If you run Cadence via Docker Compose on Unraid or Linux, updating without data loss requires just a single command:
+            </p>
+            <pre className="p-3 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-emerald-400">
+              docker compose pull &amp;&amp; docker compose up -d
+            </pre>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: UNRAID DEPLOYMENT */}
       {activeTab === 'deployment' && (

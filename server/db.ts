@@ -4,8 +4,19 @@ import crypto from 'crypto';
 import { DatabaseState, Interaction, CoworkerProfile, SystemSettings, DailyCheckin, EncryptionInfo } from './types.js';
 import { encryptPayload, decryptPayload, isEncryptedContent } from './crypto.js';
 
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+function resolveDataDir(): string {
+  if (process.env.DATA_DIR && process.env.DATA_DIR.trim()) {
+    return path.resolve(process.env.DATA_DIR.trim());
+  }
+  if (fs.existsSync('/data')) {
+    return '/data';
+  }
+  return path.resolve(process.cwd(), 'data');
+}
+
+const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, 'database.json');
+const DB_BAK_FILE = path.join(DATA_DIR, 'database.json.bak');
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 const ENCRYPTION_PASSPHRASE = (process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_PASSPHRASE || '').trim();
 
@@ -175,17 +186,90 @@ class DatabaseEngine {
     if (!fs.existsSync(BACKUPS_DIR)) {
       fs.mkdirSync(BACKUPS_DIR, { recursive: true });
     }
+
+    // Auto-detect and migrate database from legacy / alternate mount paths
     if (!fs.existsSync(DB_FILE)) {
-      const initialState: DatabaseState = {
-        version: 1,
-        coworkers: [DEFAULT_COWORKER],
-        interactions: SAMPLE_INTERACTIONS,
-        dailyLogs: SAMPLE_DAILY_LOGS,
-        settings: DEFAULT_SETTINGS,
-        lastBackupDate: new Date().toISOString(),
-      };
-      this.writeToDisk(initialState);
-      this.inMemoryCache = initialState;
+      const candidatePaths = [
+        path.join(process.cwd(), 'data', 'database.json'),
+        '/data/database.json',
+        '/app/data/database.json',
+        DB_BAK_FILE,
+      ];
+
+      let migrated = false;
+      for (const cand of candidatePaths) {
+        if (cand !== DB_FILE && fs.existsSync(cand)) {
+          try {
+            const content = fs.readFileSync(cand, 'utf-8');
+            if (content.length > 20) {
+              fs.writeFileSync(DB_FILE, content, 'utf-8');
+              console.log(`[Cadence Migration] Successfully preserved database from ${cand} -> ${DB_FILE}`);
+              migrated = true;
+              break;
+            }
+          } catch (err: any) {
+            console.error(`[Cadence Migration] Could not migrate from ${cand}:`, err.message);
+          }
+        }
+      }
+
+      // Check for candidate backups in BACKUPS_DIR if still not found
+      if (!migrated && fs.existsSync(BACKUPS_DIR)) {
+        try {
+          const files = fs.readdirSync(BACKUPS_DIR).filter((f) => f.endsWith('.json')).sort().reverse();
+          if (files.length > 0) {
+            const latestBackup = path.join(BACKUPS_DIR, files[0]);
+            const content = fs.readFileSync(latestBackup, 'utf-8');
+            if (content.length > 20) {
+              fs.writeFileSync(DB_FILE, content, 'utf-8');
+              console.log(`[Cadence Recovery] Restored database from most recent snapshot: ${latestBackup}`);
+              migrated = true;
+            }
+          }
+        } catch (bErr) {
+          console.error('[Cadence Recovery] Could not restore from backups:', bErr);
+        }
+      }
+
+      // Only seed sample data if no pre-existing database was found anywhere
+      if (!migrated && !fs.existsSync(DB_FILE)) {
+        const initialState: DatabaseState = {
+          version: 1,
+          coworkers: [DEFAULT_COWORKER],
+          interactions: SAMPLE_INTERACTIONS,
+          dailyLogs: SAMPLE_DAILY_LOGS,
+          settings: DEFAULT_SETTINGS,
+          lastBackupDate: new Date().toISOString(),
+        };
+        this.writeToDisk(initialState);
+        this.inMemoryCache = initialState;
+        return;
+      }
+    }
+
+    // If DB_FILE exists, create an automated pre-update startup safety snapshot
+    if (fs.existsSync(DB_FILE)) {
+      try {
+        const raw = fs.readFileSync(DB_FILE, 'utf-8');
+        if (raw.length > 20) {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const startupBackupFile = path.join(BACKUPS_DIR, `pre_update_snapshot_${ts}.json`);
+          fs.writeFileSync(startupBackupFile, raw, 'utf-8');
+          console.log(`[Cadence Safety] Pre-update safety snapshot created: ${startupBackupFile}`);
+
+          // Keep up to 20 most recent startup snapshots
+          const snapshots = fs.readdirSync(BACKUPS_DIR)
+            .filter((f) => f.startsWith('pre_update_snapshot_'))
+            .sort();
+          if (snapshots.length > 20) {
+            snapshots.slice(0, snapshots.length - 20).forEach((oldSnap) => {
+              try { fs.unlinkSync(path.join(BACKUPS_DIR, oldSnap)); } catch {}
+            });
+          }
+        }
+      } catch (err: any) {
+        console.error('[Cadence Safety] Failed to create pre-update snapshot:', err.message);
+      }
     }
   }
 
@@ -221,13 +305,38 @@ class DatabaseEngine {
         return parsed;
       }
     } catch (err: any) {
-      console.error('Error reading database file:', err.message || err);
+      console.error('[Cadence Database] Error reading database file:', err.message || err);
       // Re-throw if it's a security/decryption failure to avoid overwriting or silently ignoring encrypted data
       if (
         (err.message && err.message.includes('ENCRYPTION_PASSPHRASE')) ||
         (err.message && err.message.includes('Decryption failed'))
       ) {
-        throw err;
+        throw new Error(
+          'Database is encrypted with AES-256-GCM. Please pass ENCRYPTION_PASSPHRASE environment variable to unlock your records.'
+        );
+      }
+
+      // Attempt recovery from .bak file
+      if (fs.existsSync(DB_BAK_FILE)) {
+        try {
+          console.warn('[Cadence Recovery] Attempting restore from database.json.bak...');
+          const bakRaw = fs.readFileSync(DB_BAK_FILE, 'utf-8');
+          const bakParsed = JSON.parse(
+            isEncryptedContent(bakRaw) ? decryptPayload(bakRaw, ENCRYPTION_PASSPHRASE) : bakRaw
+          );
+          this.writeToDisk(bakParsed);
+          this.inMemoryCache = bakParsed;
+          return bakParsed;
+        } catch (bakErr: any) {
+          console.error('[Cadence Recovery] .bak recovery failed:', bakErr.message);
+        }
+      }
+
+      // If DB_FILE exists with data, NEVER wipe it silently with empty fallback
+      if (fs.existsSync(DB_FILE) && fs.statSync(DB_FILE).size > 50) {
+        throw new Error(
+          `Critical error reading database file at ${DB_FILE}: ${err.message}. Refusing to overwrite existing file.`
+        );
       }
     }
 
@@ -243,12 +352,58 @@ class DatabaseEngine {
   }
 
   private writeToDisk(state: DatabaseState): void {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
     const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
     const payload = JSON.stringify(state, null, 2);
     const content = ENCRYPTION_PASSPHRASE ? encryptPayload(payload, ENCRYPTION_PASSPHRASE) : payload;
-    fs.writeFileSync(tempFile, content, 'utf-8');
-    fs.renameSync(tempFile, DB_FILE);
-    this.inMemoryCache = state;
+
+    try {
+      // 1. Write to temporary file
+      fs.writeFileSync(tempFile, content, 'utf-8');
+
+      // 2. Preserve immediate prior copy as .bak if DB_FILE exists
+      if (fs.existsSync(DB_FILE)) {
+        try {
+          fs.copyFileSync(DB_FILE, DB_BAK_FILE);
+        } catch {}
+      }
+
+      // 3. Atomic rename with cross-filesystem fallback
+      try {
+        fs.renameSync(tempFile, DB_FILE);
+      } catch (renameErr) {
+        fs.copyFileSync(tempFile, DB_FILE);
+        try {
+          fs.unlinkSync(tempFile);
+        } catch {}
+      }
+
+      this.inMemoryCache = state;
+    } catch (err: any) {
+      console.error('[Cadence Database] Critical failure writing database to disk:', err.message);
+      // Emergency direct write
+      try {
+        fs.writeFileSync(DB_FILE, content, 'utf-8');
+        this.inMemoryCache = state;
+      } catch (directErr: any) {
+        console.error('[Cadence Database] Emergency direct write failed:', directErr.message);
+        throw err;
+      }
+    }
+  }
+
+  public flushAndBackup(reason: string = 'manual'): string {
+    const db = this.readFromDisk();
+    this.writeToDisk(db);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `snapshot_${reason}_${timestamp}.json`;
+    const targetFile = path.join(BACKUPS_DIR, filename);
+    const payload = JSON.stringify(db, null, 2);
+    const content = ENCRYPTION_PASSPHRASE ? encryptPayload(payload, ENCRYPTION_PASSPHRASE) : payload;
+    fs.writeFileSync(targetFile, content, 'utf-8');
+    return targetFile;
   }
 
 

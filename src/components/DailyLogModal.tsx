@@ -88,6 +88,8 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   // Sync form when selectedDate or coworkerId changes
   useEffect(() => {
     const existing = dailyLogs.find((d) => d.date === selectedDate && d.coworkerId === coworkerId);
@@ -105,6 +107,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
       setQuickNotes('');
     }
     setConfirmClear(false);
+    setErrorMessage(null);
   }, [selectedDate, coworkerId, dailyLogs]);
 
   if (!isOpen) return null;
@@ -112,20 +115,24 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
   const existingLog = dailyLogs.find((d) => d.date === selectedDate && d.coworkerId === coworkerId);
 
   const handlePrevDay = () => {
+    setErrorMessage(null);
     onSelectDate(shiftDateStr(selectedDate, -1));
   };
 
   const handleNextDay = () => {
+    setErrorMessage(null);
     onSelectDate(shiftDateStr(selectedDate, 1));
   };
 
   const handleToday = () => {
+    setErrorMessage(null);
     onSelectDate(getLocalTodayDate());
   };
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSaving(true);
+    setErrorMessage(null);
     try {
       const selectedCw = coworkers.find((c) => c.id === coworkerId) || primaryCoworker;
       await onSaveDailyLog({
@@ -142,7 +149,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err: any) {
-      alert(err.message || 'Failed to save daily log');
+      setErrorMessage(err.message || 'Failed to save daily log');
     } finally {
       setIsSaving(false);
     }
@@ -150,6 +157,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
 
   const handleClear = async () => {
     setIsDeleting(true);
+    setErrorMessage(null);
     try {
       if (existingLog) {
         await onDeleteDailyLog(existingLog.id, coworkerId);
@@ -163,7 +171,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
       setQuickNotes('');
       setConfirmClear(false);
     } catch (err: any) {
-      alert(err.message || 'Failed to clear daily log');
+      setErrorMessage(err.message || 'Failed to clear daily log');
     } finally {
       setIsDeleting(false);
     }
@@ -290,6 +298,18 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
 
         {/* Modal Form Body */}
         <form onSubmit={handleSave} className="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
+          {errorMessage && (
+            <div className="p-2.5 bg-rose-950/80 border border-rose-500/50 rounded-lg text-rose-200 text-xs flex items-center justify-between">
+              <span>{errorMessage}</span>
+              <button
+                type="button"
+                onClick={() => setErrorMessage(null)}
+                className="text-rose-400 hover:text-rose-200 text-xs ml-2"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {/* 1. Was there an interaction? */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
