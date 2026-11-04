@@ -13,7 +13,20 @@
     }
   ],
   "interactions": [],
-  "dailyLogs": [],
+  "dailyLogs": [
+    {
+      "date": "2026-11-04",
+      "coworkerId": "cw_primary_default",
+      "coworkerName": "Primary Coworker",
+      "hadInteraction": true,
+      "hadDailyTieIn": false,
+      "tieInType": "None - Casual / Unrelated to Work",
+      "overallClimate": "peaceful_neutral",
+      "quickNotes": "Testing data persistence across reset and restart",
+      "id": "daily_1793816595929_735b",
+      "recordedAt": "2026-11-04T18:23:15.929Z"
+    }
+  ],
   "settings": {
     "pinHash": null,
     "pinEnabled": false,

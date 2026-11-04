@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "coworkers": [
+    {
+      "id": "cw_primary_default",
+      "alias": "Primary Coworker",
+      "role": "",
+      "department": "",
+      "relationship": "Peer",
+      "notes": "",
+      "isPrimarySubject": true,
+      "createdAt": "2026-11-04T16:25:00.000Z"
+    }
+  ],
+  "interactions": [],
+  "dailyLogs": [],
+  "settings": {
+    "pinHash": null,
+    "pinEnabled": false,
+    "autoLockMinutes": 15,
+    "stealthBlurDefault": false,
+    "anonymizeInView": false,
+    "coworkerDefaultAlias": "Primary Coworker"
+  },
+  "lastBackupDate": "2026-11-04T16:25:00.000Z"
+}

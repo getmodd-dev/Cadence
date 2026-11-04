@@ -4,13 +4,82 @@ import crypto from 'crypto';
 import { DatabaseState, Interaction, CoworkerProfile, SystemSettings, DailyCheckin, EncryptionInfo } from './types.js';
 import { encryptPayload, decryptPayload, isEncryptedContent } from './crypto.js';
 
+/**
+ * Checks if a directory is an active Linux/Docker mount point
+ */
+function isDirectoryMounted(dirPath: string): boolean {
+  try {
+    if (fs.existsSync('/proc/mounts')) {
+      const mounts = fs.readFileSync('/proc/mounts', 'utf-8');
+      const lines = mounts.split('\n');
+      const resolved = path.resolve(dirPath);
+      return lines.some((line) => {
+        const parts = line.split(' ');
+        return parts.length >= 2 && path.resolve(parts[1]) === resolved;
+      });
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Resolves the persistent data directory with maximum resilience:
+ * Prioritizes active host mounts (/app/data or /data) and existing database files.
+ */
 function resolveDataDir(): string {
-  if (process.env.DATA_DIR && process.env.DATA_DIR.trim()) {
-    return path.resolve(process.env.DATA_DIR.trim());
+  // 1. Check if /app/data is an active host volume mount (canonical container app path)
+  if (isDirectoryMounted('/app/data')) {
+    console.log('[Cadence Storage] Detected active host mount at /app/data');
+    return '/app/data';
   }
-  if (fs.existsSync('/data')) {
+
+  // 2. Check if /data is an active host volume mount
+  if (isDirectoryMounted('/data')) {
+    console.log('[Cadence Storage] Detected active host mount at /data');
     return '/data';
   }
+
+  // 3. If DATA_DIR environment variable is provided
+  const envDir = (process.env.DATA_DIR || '').trim();
+  if (envDir) {
+    const resolvedEnv = path.resolve(envDir);
+    // If env is set to /data, but /app/data contains an existing database file, prefer /app/data
+    if (resolvedEnv === '/data') {
+      const appDataDb = '/app/data/database.json';
+      const rootDataDb = '/data/database.json';
+      if (fs.existsSync(appDataDb) && (!fs.existsSync(rootDataDb) || fs.statSync(appDataDb).size > fs.statSync(rootDataDb).size)) {
+        console.log('[Cadence Storage] Existing database found in /app/data, prioritizing /app/data');
+        return '/app/data';
+      }
+    }
+    return resolvedEnv;
+  }
+
+  // 4. Check candidate locations for existing database files with content
+  const candidateDirs = [
+    '/app/data',
+    path.resolve(process.cwd(), 'data'),
+    '/data',
+  ];
+
+  for (const dir of candidateDirs) {
+    const candidateFile = path.join(dir, 'database.json');
+    if (fs.existsSync(candidateFile)) {
+      try {
+        if (fs.statSync(candidateFile).size > 20) {
+          console.log(`[Cadence Storage] Found existing database in ${dir}`);
+          return dir;
+        }
+      } catch {}
+    }
+  }
+
+  // 5. Container runtime default (matches WORKDIR /app)
+  if (fs.existsSync('/app')) {
+    return '/app/data';
+  }
+
+  // 6. Local dev fallback (process.cwd()/data)
   return path.resolve(process.cwd(), 'data');
 }
 
@@ -19,6 +88,8 @@ const DB_FILE = path.join(DATA_DIR, 'database.json');
 const DB_BAK_FILE = path.join(DATA_DIR, 'database.json.bak');
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 const ENCRYPTION_PASSPHRASE = (process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_PASSPHRASE || '').trim();
+
+console.log(`[Cadence Engine] Initialized with DATA_DIR=${DATA_DIR}, DB_FILE=${DB_FILE}`);
 
 const DEFAULT_SETTINGS: SystemSettings = {
   pinHash: null,
@@ -56,13 +127,23 @@ class DatabaseEngine {
       fs.mkdirSync(BACKUPS_DIR, { recursive: true });
     }
 
+    // Always ensure /app/data exists so user volume mappings can be written to
+    if (fs.existsSync('/app') && !fs.existsSync('/app/data')) {
+      try { fs.mkdirSync('/app/data', { recursive: true }); } catch {}
+    }
+    if (!fs.existsSync('/data')) {
+      try { fs.mkdirSync('/data', { recursive: true }); } catch {}
+    }
+
     // Auto-detect and migrate database from legacy / alternate mount paths
-    if (!fs.existsSync(DB_FILE)) {
+    if (!fs.existsSync(DB_FILE) || fs.statSync(DB_FILE).size <= 20) {
       const candidatePaths = [
+        '/app/data/database.json',
         path.join(process.cwd(), 'data', 'database.json'),
         '/data/database.json',
-        '/app/data/database.json',
         DB_BAK_FILE,
+        '/app/data/database.json.bak',
+        '/data/database.json.bak',
       ];
 
       let migrated = false;
@@ -82,26 +163,37 @@ class DatabaseEngine {
         }
       }
 
-      // Check for candidate backups in BACKUPS_DIR if still not found
-      if (!migrated && fs.existsSync(BACKUPS_DIR)) {
-        try {
-          const files = fs.readdirSync(BACKUPS_DIR).filter((f) => f.endsWith('.json')).sort().reverse();
-          if (files.length > 0) {
-            const latestBackup = path.join(BACKUPS_DIR, files[0]);
-            const content = fs.readFileSync(latestBackup, 'utf-8');
-            if (content.length > 20) {
-              fs.writeFileSync(DB_FILE, content, 'utf-8');
-              console.log(`[Cadence Recovery] Restored database from most recent snapshot: ${latestBackup}`);
-              migrated = true;
+      // Check for candidate backups in BACKUPS_DIR, /app/data/backups, or /data/backups
+      if (!migrated) {
+        const candidateBackupDirs = [
+          BACKUPS_DIR,
+          '/app/data/backups',
+          '/data/backups',
+          path.join(process.cwd(), 'data', 'backups'),
+        ];
+        for (const bDir of candidateBackupDirs) {
+          if (fs.existsSync(bDir)) {
+            try {
+              const files = fs.readdirSync(bDir).filter((f) => f.endsWith('.json')).sort().reverse();
+              if (files.length > 0) {
+                const latestBackup = path.join(bDir, files[0]);
+                const content = fs.readFileSync(latestBackup, 'utf-8');
+                if (content.length > 20) {
+                  fs.writeFileSync(DB_FILE, content, 'utf-8');
+                  console.log(`[Cadence Recovery] Restored database from most recent snapshot: ${latestBackup}`);
+                  migrated = true;
+                  break;
+                }
+              }
+            } catch (bErr: any) {
+              console.error(`[Cadence Recovery] Could not restore from ${bDir}:`, bErr.message);
             }
           }
-        } catch (bErr) {
-          console.error('[Cadence Recovery] Could not restore from backups:', bErr);
         }
       }
 
-      // Initialize completely empty database
-      if (!migrated && !fs.existsSync(DB_FILE)) {
+      // Initialize completely empty database only if truly no data exists anywhere
+      if (!migrated && (!fs.existsSync(DB_FILE) || fs.statSync(DB_FILE).size === 0)) {
         const initialState: DatabaseState = {
           version: 1,
           coworkers: [DEFAULT_COWORKER],
@@ -116,7 +208,7 @@ class DatabaseEngine {
       }
     }
 
-    // If DB_FILE exists, create an automated pre-update startup safety snapshot
+    // If DB_FILE exists with data, create an automated pre-update startup safety snapshot
     if (fs.existsSync(DB_FILE)) {
       try {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
@@ -142,6 +234,29 @@ class DatabaseEngine {
     }
   }
 
+  private mirrorWriteToAlternateLocation(content: string): void {
+    try {
+      // If primary is /app/data, mirror to /data if /data is a separate directory
+      if (DATA_DIR === '/app/data' && fs.existsSync('/data')) {
+        const isSymlink = fs.lstatSync('/data').isSymbolicLink();
+        if (!isSymlink) {
+          fs.writeFileSync('/data/database.json', content, 'utf-8');
+          try { fs.chmodSync('/data/database.json', 0o666); } catch {}
+        }
+      }
+      // If primary is /data, mirror to /app/data if /app/data is a separate directory
+      if (DATA_DIR !== '/app/data' && fs.existsSync('/app/data')) {
+        const isSymlink = fs.lstatSync('/app/data').isSymbolicLink();
+        if (!isSymlink) {
+          fs.writeFileSync('/app/data/database.json', content, 'utf-8');
+          try { fs.chmodSync('/app/data/database.json', 0o666); } catch {}
+        }
+      }
+    } catch {
+      // Non-fatal, mirror write is best-effort sync
+    }
+  }
+
   private readFromDisk(): DatabaseState {
     if (this.inMemoryCache) {
       if (!this.inMemoryCache.dailyLogs) {
@@ -159,7 +274,7 @@ class DatabaseEngine {
           parsed = JSON.parse(decrypted);
         } else {
           parsed = JSON.parse(raw);
-          // If a passphrase is newly supplied for a plaintext DB, encrypt on next write or auto-encrypt now
+          // If a passphrase is newly supplied for a plaintext DB, encrypt on next write
           if (ENCRYPTION_PASSPHRASE) {
             console.log('[Cadence Security] Transparently upgrading plaintext database to AES-256-GCM encryption.');
             this.writeToDisk(parsed);
@@ -201,6 +316,25 @@ class DatabaseEngine {
         }
       }
 
+      // Attempt recovery from candidate paths (/app/data or /data)
+      const alternateCandidates = ['/app/data/database.json', '/data/database.json'];
+      for (const alt of alternateCandidates) {
+        if (alt !== DB_FILE && fs.existsSync(alt)) {
+          try {
+            const altRaw = fs.readFileSync(alt, 'utf-8');
+            if (altRaw.length > 50) {
+              const altParsed = JSON.parse(
+                isEncryptedContent(altRaw) ? decryptPayload(altRaw, ENCRYPTION_PASSPHRASE) : altRaw
+              );
+              this.writeToDisk(altParsed);
+              this.inMemoryCache = altParsed;
+              console.log(`[Cadence Recovery] Restored from alternate path ${alt}`);
+              return altParsed;
+            }
+          } catch {}
+        }
+      }
+
       // If DB_FILE exists with data, NEVER wipe it silently with empty fallback
       if (fs.existsSync(DB_FILE) && fs.statSync(DB_FILE).size > 50) {
         throw new Error(
@@ -231,11 +365,13 @@ class DatabaseEngine {
     try {
       // 1. Write to temporary file
       fs.writeFileSync(tempFile, content, 'utf-8');
+      try { fs.chmodSync(tempFile, 0o666); } catch {}
 
       // 2. Preserve immediate prior copy as .bak if DB_FILE exists
       if (fs.existsSync(DB_FILE)) {
         try {
           fs.copyFileSync(DB_FILE, DB_BAK_FILE);
+          try { fs.chmodSync(DB_BAK_FILE, 0o666); } catch {}
         } catch {}
       }
 
@@ -248,6 +384,10 @@ class DatabaseEngine {
           fs.unlinkSync(tempFile);
         } catch {}
       }
+      try { fs.chmodSync(DB_FILE, 0o666); } catch {}
+
+      // 4. Mirror write to alternate location (/app/data or /data) for seamless dual-path volume mounts
+      this.mirrorWriteToAlternateLocation(content);
 
       this.inMemoryCache = state;
     } catch (err: any) {
@@ -255,6 +395,8 @@ class DatabaseEngine {
       // Emergency direct write
       try {
         fs.writeFileSync(DB_FILE, content, 'utf-8');
+        try { fs.chmodSync(DB_FILE, 0o666); } catch {}
+        this.mirrorWriteToAlternateLocation(content);
         this.inMemoryCache = state;
       } catch (directErr: any) {
         console.error('[Cadence Database] Emergency direct write failed:', directErr.message);
@@ -272,9 +414,9 @@ class DatabaseEngine {
     const payload = JSON.stringify(db, null, 2);
     const content = ENCRYPTION_PASSPHRASE ? encryptPayload(payload, ENCRYPTION_PASSPHRASE) : payload;
     fs.writeFileSync(targetFile, content, 'utf-8');
+    try { fs.chmodSync(targetFile, 0o666); } catch {}
     return targetFile;
   }
-
 
   // --- Coworkers API ---
   public getCoworkers(): CoworkerProfile[] {
@@ -501,6 +643,7 @@ class DatabaseEngine {
     const rawJson = JSON.stringify(db, null, 2);
     const content = ENCRYPTION_PASSPHRASE ? encryptPayload(rawJson, ENCRYPTION_PASSPHRASE) : rawJson;
     fs.writeFileSync(backupPath, content, 'utf-8');
+    try { fs.chmodSync(backupPath, 0o666); } catch {}
 
     db.lastBackupDate = new Date().toISOString();
     this.writeToDisk(db);
@@ -573,6 +716,9 @@ class DatabaseEngine {
       environment: process.env.NODE_ENV || 'development',
       platform: process.platform,
       encryption,
+      isAppDataMounted: isDirectoryMounted('/app/data'),
+      isDataMounted: isDirectoryMounted('/data'),
+      dualSyncActive: true,
     };
   }
 }

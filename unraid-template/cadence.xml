@@ -34,7 +34,7 @@
   <Data>
     <Volume>
       <HostDir>/mnt/user/appdata/cadence</HostDir>
-      <ContainerDir>/data</ContainerDir>
+      <ContainerDir>/app/data</ContainerDir>
       <Mode>rw</Mode>
     </Volume>
   </Data>
@@ -45,7 +45,7 @@
       <Mode/>
     </Variable>
     <Variable>
-      <Value>/data</Value>
+      <Value>/app/data</Value>
       <Name>DATA_DIR</Name>
       <Mode/>
     </Variable>
@@ -57,7 +57,7 @@
   </Environment>
   <Labels/>
   <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
-  <Config Name="Appdata Storage Path" Target="/data" Default="/mnt/user/appdata/cadence" Mode="rw" Description="Persistent database volume. CRITICAL: Mapped to /mnt/user/appdata/cadence so data persists across container updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/cadence</Config>
-  <Config Name="Data Directory Variable" Target="DATA_DIR" Default="/data" Mode="" Description="Internal container data directory path" Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
+  <Config Name="Appdata Storage Path" Target="/app/data" Default="/mnt/user/appdata/cadence" Mode="rw" Description="Persistent database volume. CRITICAL: Mapped to /mnt/user/appdata/cadence so data persists across container updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/cadence</Config>
+  <Config Name="Data Directory Variable" Target="DATA_DIR" Default="/app/data" Mode="" Description="Internal container data directory path" Type="Variable" Display="advanced" Required="true" Mask="false">/app/data</Config>
   <Config Name="Encryption Passphrase (Optional)" Target="ENCRYPTION_PASSPHRASE" Default="" Mode="" Description="Optional AES-256-GCM encryption passphrase. If configured, database.json and snapshots are encrypted at rest on the array." Type="Variable" Display="always" Required="false" Mask="true"></Config>
 </Container>

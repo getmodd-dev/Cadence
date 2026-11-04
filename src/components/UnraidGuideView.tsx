@@ -140,13 +140,14 @@ export const UnraidGuideView: React.FC<UnraidGuideViewProps> = ({ onRefreshData 
       - "3000:3000"
     environment:
       - PORT=3000
-      - DATA_DIR=/data
+      - DATA_DIR=/app/data
       - NODE_ENV=production
       # Optional: AES-256-GCM encryption at rest for database.json & snapshots
       # - ENCRYPTION_PASSPHRASE=your-strong-passphrase-here
     volumes:
       # Map to Unraid appdata share for private, parity-protected storage
-      - /mnt/user/appdata/cadence:/data
+      # (Both /app/data and /data are supported with automatic dual-sync)
+      - /mnt/user/appdata/cadence:/app/data
 `;
 
   const ghActionsWorkflowSnippet = `name: Build and Push Docker Image to GHCR
@@ -436,9 +437,9 @@ jobs:
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
               <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1">
-                <span className="font-semibold text-rose-300 block">1. Missing Volume Mount</span>
+                <span className="font-semibold text-rose-300 block">1. Dedicated /app/data Volume</span>
                 <p className="text-slate-400 text-[11px]">
-                  Running without <code className="text-indigo-300">-v /mnt/user/appdata/cadence:/data</code> writes to temporary container storage that is destroyed on update.
+                  Map host appdata to <code className="text-indigo-300">-v /mnt/user/appdata/cadence:/app/data</code>. Container automatically dual-syncs with <code className="text-emerald-400">/data</code>.
                 </p>
               </div>
 
@@ -452,7 +453,7 @@ jobs:
               <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800 space-y-1">
                 <span className="font-semibold text-emerald-300 block">3. Automated Pre-Update Snapshots</span>
                 <p className="text-slate-400 text-[11px]">
-                  Cadence now automatically creates a safety snapshot in <code className="text-indigo-300">/data/backups/</code> every time the container starts up.
+                  Cadence now automatically creates a safety snapshot in <code className="text-indigo-300">/app/data/backups/</code> every time the container starts up.
                 </p>
               </div>
             </div>
@@ -504,7 +505,7 @@ jobs:
                 <li>
                   Unraid will automatically fill in the permanent host volume mapping:
                   <div className="font-mono text-indigo-300 mt-1 pl-3 border-l-2 border-indigo-500/50">
-                    Host Path: /mnt/user/appdata/cadence &lt;---&gt; Container Path: /data (Mode: RW)
+                    Host Path: /mnt/user/appdata/cadence &lt;---&gt; Container Path: /app/data (Mode: RW)
                   </div>
                 </li>
                 <li>
@@ -525,7 +526,7 @@ jobs:
               <button
                 onClick={() =>
                   handleCopy(
-                    `# 1. Pull latest image\\ndocker pull ${ghcrImageTag}\\n\\n# 2. Stop and remove container (Host data is preserved!)\\ndocker stop cadence\\ndocker rm cadence\\n\\n# 3. Launch with host volume mounted\\ndocker run -d \\\\\\n  --name cadence \\\\\\n  --restart unless-stopped \\\\\\n  -p 3000:3000 \\\\\\n  -v /mnt/user/appdata/cadence:/data \\\\\\n  -e DATA_DIR=/data \\\\\\n  -e PORT=3000 \\\\\\n  ${ghcrImageTag}`,
+                    `# 1. Pull latest image\\ndocker pull ${ghcrImageTag}\\n\\n# 2. Stop and remove container (Host data is preserved!)\\ndocker stop cadence\\ndocker rm cadence\\n\\n# 3. Launch with host volume mounted to /app/data\\ndocker run -d \\\\\\n  --name cadence \\\\\\n  --restart unless-stopped \\\\\\n  -p 3000:3000 \\\\\\n  -v /mnt/user/appdata/cadence:/app/data \\\\\\n  -e DATA_DIR=/app/data \\\\\\n  -e PORT=3000 \\\\\\n  ${ghcrImageTag}`,
                     'cli-update'
                   )
                 }
@@ -553,13 +554,13 @@ docker pull ${ghcrImageTag}
 docker stop cadence
 docker rm cadence
 
-# 3. Launch the new container with the exact volume flag -v /mnt/user/appdata/cadence:/data
+# 3. Launch the new container with volume mapped to /app/data
 docker run -d \\
   --name cadence \\
   --restart unless-stopped \\
   -p 3000:3000 \\
-  -v /mnt/user/appdata/cadence:/data \\
-  -e DATA_DIR=/data \\
+  -v /mnt/user/appdata/cadence:/app/data \\
+  -e DATA_DIR=/app/data \\
   -e PORT=3000 \\
   ${ghcrImageTag}`}
             </pre>
@@ -615,7 +616,7 @@ docker run -d \\
             </p>
 
             <div className="bg-slate-950 p-3 rounded border border-slate-800/80 text-xs font-mono space-y-1">
-              <div className="text-slate-400">Container Path: <span className="text-emerald-400">/data</span></div>
+              <div className="text-slate-400">Container Path: <span className="text-emerald-400">/app/data</span> (also dual-synced with /data)</div>
               <div className="text-slate-400">Host Path (Unraid): <span className="text-indigo-400">/mnt/user/appdata/cadence</span></div>
               <div className="text-slate-400">Container Port: <span className="text-amber-400">3000</span> (Web UI)</div>
             </div>
@@ -689,7 +690,7 @@ docker run -d \\
               <div className="p-3 bg-slate-950 rounded border border-slate-800 sm:col-span-2">
                 <span className="text-slate-400 block font-semibold">Data Volume (Path 1)</span>
                 <span className="text-slate-200 font-mono">
-                  Host Path: /mnt/user/appdata/cadence | Container Path: /data
+                  Host Path: /mnt/user/appdata/cadence | Container Path: /app/data
                 </span>
               </div>
             </div>

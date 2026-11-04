@@ -8,11 +8,11 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      - DATA_DIR=/data
+      - DATA_DIR=/app/data
       - NODE_ENV=production
       # Optional: AES-256-GCM encryption at rest on the Unraid server array
       # - ENCRYPTION_PASSPHRASE=your-strong-passphrase-here
     volumes:
-      # Map to Unraid appdata array for permanent, private, parity-protected storage
-      - /mnt/user/appdata/cadence:/data
-
+      # Map host appdata directory to /app/data for permanent storage across container updates and resets
+      # (Note: Container also dual-syncs to /data for compatibility with alternate volume setups)
+      - /mnt/user/appdata/cadence:/app/data

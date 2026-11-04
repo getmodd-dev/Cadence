@@ -21,10 +21,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DATA_DIR=/data
+ENV DATA_DIR=/app/data
 
-# Create data directory volume
-RUN mkdir -p /data /app/data
+# Create data directories for dual-path persistence (/app/data and /data)
+RUN mkdir -p /app/data /data
 
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
@@ -36,7 +36,7 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 3000
-VOLUME ["/data"]
+VOLUME ["/app/data", "/data"]
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["npx", "tsx", "server.ts"]

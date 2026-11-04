@@ -127,6 +127,9 @@ export interface SystemStatus {
   environment: string;
   platform: string;
   encryption?: EncryptionInfo;
+  isAppDataMounted?: boolean;
+  isDataMounted?: boolean;
+  dualSyncActive?: boolean;
 }
 
 export type ActiveTab = 'home' | 'calendar' | 'custom_report' | 'timeline' | 'analytics' | 'dossier' | 'unraid';
