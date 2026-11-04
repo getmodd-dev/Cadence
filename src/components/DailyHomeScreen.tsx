@@ -24,10 +24,17 @@ import {
   Trash2,
   Users,
   Paperclip,
-  FileText,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+import {
+  formatDisplayDate,
+  shiftDateStr,
+  getLocalTodayDate,
+  isToday,
+} from '../utils/dateUtils';
 
 interface DailyHomeScreenProps {
   selectedDate: string;
@@ -35,6 +42,7 @@ interface DailyHomeScreenProps {
   coworkers: CoworkerProfile[];
   dailyLogs: DailyCheckin[];
   onSaveDailyLog: (log: Omit<DailyCheckin, 'id' | 'recordedAt'> & { id?: string }) => Promise<void>;
+  onDeleteDailyLog?: (idOrDate: string, coworkerId?: string) => Promise<void>;
   onOpenCustomReport: (prefill?: { date: string; coworkerId: string; notes?: string }) => void;
   onEditInteraction: (interaction: Interaction) => void;
   onDeleteInteraction: (id: string) => Promise<void>;
@@ -66,6 +74,7 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
   coworkers,
   dailyLogs,
   onSaveDailyLog,
+  onDeleteDailyLog,
   onOpenCustomReport,
   onEditInteraction,
   onDeleteInteraction,
@@ -90,6 +99,13 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isCheckinCollapsed, setIsCheckinCollapsed] = useState(false);
+  const [isClearingDaily, setIsClearingDaily] = useState(false);
+  const [confirmClearDaily, setConfirmClearDaily] = useState(false);
+
+  // Reset clear confirmation when date or coworker changes
+  useEffect(() => {
+    setConfirmClearDaily(false);
+  }, [selectedDate, coworkerId]);
 
   // Load existing log for selected date
   useEffect(() => {
@@ -133,6 +149,29 @@ export const DailyHomeScreen: React.FC<DailyHomeScreenProps> = ({
     }
   };
 
+  const handleClearDailyLog = async () => {
+    setIsClearingDaily(true);
+    try {
+      if (onDeleteDailyLog) {
+        if (existingLog) {
+          await onDeleteDailyLog(existingLog.id, coworkerId);
+        } else {
+          await onDeleteDailyLog(selectedDate, coworkerId);
+        }
+      }
+      setHadInteraction(true);
+      setHadDailyTieIn(true);
+      setTieInType('Daily Standup / Team Sync');
+      setOverallClimate('peaceful_neutral');
+      setQuickNotes('');
+      setConfirmClearDaily(false);
+    } catch (err: any) {
+      alert(err.message || 'Failed to clear daily log');
+    } finally {
+      setIsClearingDaily(false);
+    }
+  };
+
   const existingLog = dailyLogs.find((d) => d.date === selectedDate && d.coworkerId === coworkerId);
   
   // Incidents for selected date sorted chronologically
@@ -165,41 +204,90 @@ ${item.impactNotes || 'None'}
     'Smooth handoff; polite email exchange.',
   ];
 
-  const selectedDateFormatted = new Date(selectedDate).toLocaleDateString([], {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const selectedDateFormatted = formatDisplayDate(selectedDate);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* View Header: Selected Date Context & Coworker */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+      {/* View Header: Selected Date Context, Back / Today / Forward Navigation & Coworker */}
+      <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-slate-100 font-mono">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-slate-100 font-mono">
               {selectedDateFormatted}
             </h1>
-            {existingLog && (
-              <span className="text-xs bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded font-mono flex items-center gap-1">
+            {existingLog ? (
+              <span className="text-xs bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded font-mono flex items-center gap-1">
                 <Check className="w-3 h-3" />
                 Checked-in
               </span>
+            ) : (
+              <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">
+                Unlogged
+              </span>
             )}
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Daily timeline of workplace encounters and contemporaneous report options.
+          <p className="text-xs text-slate-400 mt-1">
+            Contemporaneous workplace interactions, daily pulse, and chronological timeline.
           </p>
         </div>
 
-        {/* Coworker Subject Dropdown */}
-        <div className="flex items-center gap-2 self-start sm:self-center">
-          <span className="text-xs text-slate-400">Subject:</span>
+        {/* Date Navigation (Back, Today, Forward) & Coworker Subject */}
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+          {/* Day Navigation Buttons */}
+          <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => onSelectDate(shiftDateStr(selectedDate, -1))}
+              className="p-1.5 rounded-md hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              title="Previous Day (Back)"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectDate(getLocalTodayDate())}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                isToday(selectedDate)
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+              }`}
+              title="Jump to Today"
+            >
+              Today
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectDate(shiftDateStr(selectedDate, 1))}
+              className="p-1.5 rounded-md hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              title="Next Day (Forward)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Quick Date Picker */}
+          <label className="relative flex items-center cursor-pointer" title="Jump to date">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                if (e.target.value) onSelectDate(e.target.value);
+              }}
+              className="sr-only"
+            />
+            <span className="text-xs font-mono font-medium text-slate-300 bg-slate-950 border border-slate-800 hover:border-slate-700 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+              <span>{selectedDate}</span>
+            </span>
+          </label>
+
+          {/* Coworker Dropdown */}
           <select
             value={coworkerId}
             onChange={(e) => setCoworkerId(e.target.value)}
-            className={`bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 ${
+            className={`bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 ${
               stealthMode ? 'blur-sm select-none' : ''
             }`}
           >
@@ -398,11 +486,50 @@ ${item.impactNotes || 'None'}
               </div>
             </div>
 
-            <div className="flex justify-end pt-1">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
+              {/* Clear Daily Log Button / Confirmation */}
+              <div>
+                {existingLog ? (
+                  confirmClearDaily ? (
+                    <div className="flex items-center gap-2 bg-rose-950/80 border border-rose-500/50 p-1.5 rounded-lg">
+                      <span className="text-[11px] text-rose-300 font-medium">Clear entry for {selectedDate}?</span>
+                      <button
+                        type="button"
+                        disabled={isClearingDaily}
+                        onClick={handleClearDailyLog}
+                        className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors"
+                      >
+                        {isClearingDaily ? 'Clearing...' : 'Yes, Clear'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearDaily(false)}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearDaily(true)}
+                      className="px-3 py-2 rounded-lg border border-rose-900/60 bg-rose-950/30 hover:bg-rose-900/40 text-rose-300 text-xs font-medium flex items-center gap-1.5 transition-colors self-start"
+                      title="Clear and reset this day's daily check-in"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Clear Daily Log Entry</span>
+                    </button>
+                  )
+                ) : (
+                  <span className="text-xs text-slate-500 italic">No daily check-in saved for this date.</span>
+                )}
+              </div>
+
+              {/* Save Button */}
               <button
                 type="submit"
                 disabled={isSaving}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors self-end"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>{isSaving ? 'Saving...' : existingLog ? 'Update Daily Check-in' : 'Save Daily Check-in'}</span>

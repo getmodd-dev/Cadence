@@ -426,11 +426,11 @@ class DatabaseEngine {
     }
   }
 
-  public deleteDailyLog(id: string): boolean {
+  public deleteDailyLog(idOrDate: string): boolean {
     const db = this.readFromDisk();
     if (!db.dailyLogs) return false;
     const prev = db.dailyLogs.length;
-    db.dailyLogs = db.dailyLogs.filter((d) => d.id !== id);
+    db.dailyLogs = db.dailyLogs.filter((d) => d.id !== idOrDate && d.date !== idOrDate);
     if (db.dailyLogs.length < prev) {
       this.writeToDisk(db);
       return true;
