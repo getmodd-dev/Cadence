@@ -328,9 +328,10 @@ jobs:
               <button
                 onClick={() => setConfirmClear(true)}
                 className="text-xs text-rose-400/80 hover:text-rose-300 flex items-center gap-1 transition-colors"
+                title="Wipe records and reset database to empty"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Clear Sample Records</span>
+                <span>Reset to Empty Database</span>
               </button>
             )}
           </div>
