@@ -18,7 +18,19 @@ const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 const DB_BAK_FILE = path.join(DATA_DIR, 'database.json.bak');
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
-const ENCRYPTION_PASSPHRASE = (process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_PASSPHRASE || '').trim();
+
+function resolveEncryptionPassphrase(): string {
+  if (process.env.ENCRYPTION_PASSPHRASE_FILE && fs.existsSync(process.env.ENCRYPTION_PASSPHRASE_FILE)) {
+    try {
+      return fs.readFileSync(process.env.ENCRYPTION_PASSPHRASE_FILE, 'utf-8').trim();
+    } catch (err: any) {
+      console.error('[Cadence Security] Failed to read ENCRYPTION_PASSPHRASE_FILE:', err.message);
+    }
+  }
+  return (process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_PASSPHRASE || '').trim();
+}
+
+const ENCRYPTION_PASSPHRASE = resolveEncryptionPassphrase();
 
 const DEFAULT_SETTINGS: SystemSettings = {
   pinHash: null,
