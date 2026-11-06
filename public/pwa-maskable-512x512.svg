@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGradMask" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="shieldGradMask" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#3730a3"/>
+    </linearGradient>
+    <linearGradient id="glowGradMask" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#a5b4fc" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0.2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed background for Android maskable adaptive squircle/circle cropping -->
+  <rect width="512" height="512" fill="url(#bgGradMask)"/>
+
+  <!-- Shield scaled to sit strictly within central 80% safe zone -->
+  <g transform="translate(51.2, 51.2) scale(0.8)">
+    <path d="M 256,88 
+             C 344,88 388,114 388,114 
+             C 388,272 334,364 256,424 
+             C 178,364 124,272 124,114 
+             C 124,114 168,88 256,88 Z" 
+          fill="url(#shieldGradMask)" 
+          stroke="url(#glowGradMask)" 
+          stroke-width="12" 
+          stroke-linejoin="round"/>
+
+    <path d="M 256,124 
+             C 320,124 354,144 354,144 
+             C 354,264 312,336 256,386 
+             C 200,336 158,264 158,144 
+             C 158,144 192,124 256,124 Z" 
+          fill="none" 
+          stroke="#c7d2fe" 
+          stroke-width="5" 
+          stroke-opacity="0.35" 
+          stroke-linejoin="round"/>
+
+    <path d="M 204,248 L 242,286 L 314,204" 
+          fill="none" 
+          stroke="#ffffff" 
+          stroke-width="26" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+  </g>
+</svg>

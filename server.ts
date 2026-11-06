@@ -12,6 +12,7 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json({ limit: '10mb' }));
+app.use(express.static(path.resolve(__dirname, 'public')));
 
 // Helper for hashing PIN
 function hashPin(pin: string): string {
